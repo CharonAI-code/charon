@@ -1,0 +1,41 @@
+{
+  "name": "charon",
+  "version": "0.1.0",
+  "description": "Runtime boundary for Aeon skill runs",
+  "license": "MIT",
+  "author": "CharonAI-code",
+  "type": "commonjs",
+  "keywords": [
+    "aeon",
+    "agents",
+    "security",
+    "privacy",
+    "github-actions",
+    "cli"
+  ],
+  "bin": {
+    "charon": "bin/charon.js"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "smoke": "node bin/charon.js --help",
+    "test": "bash scripts/integration-test.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CharonAI-code/charon.git",
+    "directory": "charon/aeon"
+  },
+  "bugs": {
+    "url": "https://github.com/CharonAI-code/charon/issues"
+  },
+  "homepage": "https://github.com/CharonAI-code/charon/tree/main/charon/aeon"
+}
