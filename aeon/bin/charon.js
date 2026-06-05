@@ -17,8 +17,14 @@ function main() {
   const [cmd, ...args] = process.argv.slice(2);
   try {
     switch (cmd) {
+      case "setup":
+        setup(args);
+        break;
       case "install":
         install(args);
+        break;
+      case "sync":
+        sync(args);
         break;
       case "status":
         status();
@@ -53,7 +59,9 @@ function help() {
   console.log(`charon ${VERSION}
 
 Usage:
+  charon setup        Install, compile starter policy, and verify
   charon install      Install Charon into an Aeon repo
+  charon sync         Re-apply Charon after Aeon upstream updates
   charon status       Show installation status
   charon uninstall    Remove Charon workflow integration
   charon compile      Generate starter policies from installed Aeon skills
@@ -66,6 +74,27 @@ Install creates:
   - ${RUNNER}
   - a Charon enforcing prelude in ${WORKFLOW}
 `);
+}
+
+function setup(args) {
+  const push = args.includes("--push");
+  const commit = push || args.includes("--commit");
+  const root = findAeonRoot(process.cwd());
+  process.chdir(root);
+
+  assertAeonRepo(root);
+  install(["--force"]);
+  compile();
+  const ok = status({ quiet: true });
+  if (!ok) die("Charon setup did not pass status checks.");
+
+  if (commit) {
+    commitInstall({ push });
+  } else {
+    console.log("");
+    console.log("Next: review the generated files, then commit and push them.");
+    console.log("Tip: run `charon setup --commit` to let Charon create the commit.");
+  }
 }
 
 function install(args) {
@@ -87,12 +116,33 @@ function install(args) {
   console.log("Next: review git diff, then trigger a normal Aeon skill run.");
 }
 
-function status() {
+function sync(args) {
+  const push = args.includes("--push");
+  const commit = push || args.includes("--commit");
+  const root = findAeonRoot(process.cwd());
+  process.chdir(root);
+
+  assertAeonRepo(root);
+  ensureDir(RECEIPTS);
+  writeRunner(true);
+  patchWorkflow(true);
+
+  const ok = status({ quiet: true });
+  if (!ok) die("Charon sync did not pass status checks.");
+  console.log("Charon synced.");
+  console.log("- workflow patch is present");
+  console.log(`- runner is present: ${path.resolve(RUNNER)}`);
+  console.log(`- config is present: ${path.resolve(CONFIG)}`);
+
+  if (commit) commitInstall({ push, message: "Sync Charon runtime guardrails" });
+}
+
+function status(opts = {}) {
   const root = findAeonRoot(process.cwd(), { allowMissing: true });
   if (!root) {
-    console.log("Not inside an Aeon repo.");
+    if (!opts.quiet) console.log("Not inside an Aeon repo.");
     process.exitCode = 1;
-    return;
+    return false;
   }
   process.chdir(root);
   const checks = [
@@ -105,10 +155,12 @@ function status() {
   ];
 
   for (const [name, ok, detail] of checks) {
-    console.log(`${ok ? "OK " : "NO "} ${name} ${detail ? `- ${detail}` : ""}`);
+    if (!opts.quiet) console.log(`${ok ? "OK " : "NO "} ${name} ${detail ? `- ${detail}` : ""}`);
   }
 
-  if (!workflowPatched()) process.exitCode = 1;
+  const ok = checks.every(([, passed]) => passed);
+  if (!ok) process.exitCode = 1;
+  return ok;
 }
 
 function uninstall(args) {
@@ -193,7 +245,7 @@ function writeConfig(force) {
   fs.writeFileSync(
     CONFIG,
     `# Charon policy.
-# Phase 1 default: deny secrets unless a skill explicitly allows them.
+# Default posture: deny secrets unless a skill explicitly allows them.
 
 mode: strict
 
@@ -238,6 +290,46 @@ default:
 skills: {}
 `,
   );
+}
+
+function commitInstall(opts = {}) {
+  const message = opts.message || "Add Charon runtime guardrails";
+  const files = [CONFIG, GENERATED, RUNNER, WORKFLOW].filter((file) => fs.existsSync(file));
+  const changed = gitChanged(files);
+  if (!changed.length) {
+    console.log("No Charon changes to commit.");
+    if (opts.push) runGit(["push"]);
+    return;
+  }
+
+  runGit(["add", ...changed]);
+  runGit(["commit", "-m", message]);
+  console.log("Committed Charon changes.");
+  if (opts.push) {
+    runGit(["push"]);
+    console.log("Pushed Charon changes.");
+  }
+}
+
+function gitChanged(files) {
+  const output = runGit(["status", "--porcelain", "--", ...files], { capture: true });
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean);
+}
+
+function runGit(args, opts = {}) {
+  const cp = require("child_process");
+  const result = cp.spawnSync("git", args, {
+    encoding: "utf8",
+    stdio: opts.capture ? ["ignore", "pipe", "pipe"] : "inherit",
+  });
+  if (result.status !== 0) {
+    const detail = opts.capture ? result.stderr || result.stdout || "" : "";
+    die(`git ${args.join(" ")} failed${detail ? `:\n${detail}` : ""}`);
+  }
+  return opts.capture ? result.stdout : "";
 }
 
 function writeRunner(force) {

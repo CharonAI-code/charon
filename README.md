@@ -125,6 +125,18 @@ npm run smoke
 npm test
 ```
 
+In an Aeon fork:
+
+```bash
+npx charon setup --commit
+```
+
+After pulling Aeon upstream updates:
+
+```bash
+npx charon sync --commit
+```
+
 Hermes:
 
 ```bash
