@@ -111,6 +111,44 @@ test("boundary trace records denied file path", () => {
   assert.match(latest.stdout, /"status": "denied"/);
 });
 
+test("policy synth proposes changes from package scripts", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  fs.writeFileSync(path.join(cwd, "package.json"), JSON.stringify({
+    scripts: {
+      lint: "eslint .",
+      release: "npm publish",
+    },
+  }));
+
+  const synth = run(["policy", "synth"], { cwd });
+  assert.equal(synth.status, 0, synth.stderr);
+  assert.match(synth.stdout, /Proposal: cp-/);
+  assert.match(synth.stdout, /LOOSEN bounds.pass \+= eslint \./);
+  assert.match(synth.stdout, /TIGHTEN bounds.pause \+= npm publish/);
+
+  const apply = run(["policy", "apply", "latest"], { cwd });
+  assert.notEqual(apply.status, 0);
+  assert.match(apply.stderr, /loosening changes/);
+
+  const applyYes = run(["policy", "apply", "latest", "--yes"], { cwd });
+  assert.equal(applyYes.status, 0, applyYes.stderr);
+  const policy = fs.readFileSync(path.join(cwd, "charon.yml"), "utf8");
+  assert.match(policy, /eslint \./);
+});
+
+test("policy synth proposes Aeon skill write profile", () => {
+  const cwd = tmpdir();
+  fs.mkdirSync(path.join(cwd, "skills", "audit"), { recursive: true });
+  fs.writeFileSync(path.join(cwd, "aeon.yml"), "audit: { enabled: true }\n");
+  fs.writeFileSync(path.join(cwd, "skills", "audit", "SKILL.md"), "Write an audit report using https://api.github.com/repos/demo/demo\n");
+  assert.equal(run(["aeon", "init"], { cwd }).status, 0);
+
+  const synth = run(["policy", "synth"], { cwd });
+  assert.equal(synth.status, 0, synth.stderr);
+  assert.match(synth.stdout, /reports\/audit\/\*\*/);
+});
+
 test("paused command enters local queue and can be rejected", () => {
   const cwd = tmpdir();
   assert.equal(run(["init"], { cwd }).status, 0);

@@ -12,6 +12,7 @@ const CONFIG = "charon.yml";
 const STATE_DIR = ".charon";
 const RECEIPTS_DIR = path.join(STATE_DIR, "receipts");
 const QUEUE_DIR = path.join(STATE_DIR, "queue");
+const PROPOSALS_DIR = path.join(STATE_DIR, "policy-proposals");
 const GENERATED_DIR = path.join(STATE_DIR, "generated");
 const KEY_FILE = path.join(STATE_DIR, "receipt.key");
 const SECRET_PATTERNS = [
@@ -51,6 +52,8 @@ async function main(argv) {
       return traceCommand(args);
     case "status":
       return statusCommand(args);
+    case "policy":
+      return policyCommand(args);
     case "run":
       return runCommand(args);
     case "receipts":
@@ -86,6 +89,9 @@ Usage:
   charon history [list|latest|inspect <id|latest>]
   charon trace <id|latest>
   charon status <id|latest>
+  charon policy synth
+  charon policy review [id|latest]
+  charon policy apply <id|latest> [--yes]
   charon run -- <command>
   charon aeon init
   charon aeon enable
@@ -309,6 +315,47 @@ function traceCommand(args) {
   const file = target === "latest" ? files[0] : files.find((f) => receiptId(f) === target) || target;
   if (!file || !fs.existsSync(file)) throw new Error(`receipt not found: ${target}`);
   printTrace(readJson(file), file);
+}
+
+function policyCommand(args) {
+  const [sub, ...rest] = args;
+  if (sub === "synth") return policySynthCommand(rest);
+  if (sub === "review") return policyReviewCommand(rest);
+  if (sub === "apply") return policyApplyCommand(rest);
+  throw new Error("usage: charon policy synth | review [id|latest] | apply <id|latest> [--yes]");
+}
+
+function policySynthCommand() {
+  const policy = fs.existsSync(CONFIG) ? loadPolicy() : defaultPolicy();
+  const proposal = synthesizePolicyProposal(policy);
+  ensureDir(PROPOSALS_DIR);
+  const file = path.join(PROPOSALS_DIR, `${proposal.id}.json`);
+  fs.writeFileSync(file, `${JSON.stringify(proposal, null, 2)}\n`);
+  printPolicyProposal(proposal, file);
+}
+
+function policyReviewCommand(args) {
+  const proposal = loadPolicyProposal(args[0] || "latest");
+  printPolicyProposal(proposal.proposal, proposal.file);
+}
+
+function policyApplyCommand(args) {
+  const target = args[0] || "latest";
+  const yes = args.includes("--yes");
+  const { proposal, file } = loadPolicyProposal(target);
+  const loosens = proposal.changes.filter((change) => change.kind === "loosen");
+  if (loosens.length && !yes) {
+    throw new Error("proposal contains loosening changes. Re-run with --yes to apply explicitly.");
+  }
+  const base = fs.existsSync(CONFIG) ? loadPolicy() : defaultPolicy();
+  const next = applyPolicyChanges(base, proposal.changes);
+  validatePolicy(next);
+  fs.writeFileSync(CONFIG, yaml.dump(next, { lineWidth: 100 }));
+  proposal.status = "applied";
+  proposal.appliedAt = new Date().toISOString();
+  fs.writeFileSync(file, `${JSON.stringify(proposal, null, 2)}\n`);
+  console.log(`Applied ${proposal.id}`);
+  console.log(`Policy: ${path.resolve(CONFIG)}`);
 }
 
 function buildOpenShellCommand(command, policyPath) {
@@ -794,6 +841,163 @@ main(["aeon", "run", skill, ...rest]).catch((err) => {
   process.exitCode = err && Number.isInteger(err.exitCode) ? err.exitCode : 1;
 });
 `;
+}
+
+function synthesizePolicyProposal(policy) {
+  const changes = [];
+  for (const change of inferPackageScriptChanges(policy)) changes.push(change);
+  for (const change of inferAeonSkillChanges(policy)) changes.push(change);
+  for (const change of inferTraceChanges(policy)) changes.push(change);
+  for (const item of [".env", ".env.*", "~/.ssh/**", "~/.aws/**", "~/.config/gh/**"]) {
+    if (!policy.sandbox.files.deny.includes(item)) {
+      changes.push(policyChange("tighten", "sandbox.files.deny", "add", item, "protect common sensitive path"));
+    }
+  }
+  const deduped = dedupeChanges(changes);
+  return {
+    schema: "charon.policyProposal.v1",
+    id: `cp-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
+    createdAt: new Date().toISOString(),
+    status: "pending",
+    policyHash: hashObject(policy),
+    summary: {
+      tighten: deduped.filter((change) => change.kind === "tighten").length,
+      loosen: deduped.filter((change) => change.kind === "loosen").length,
+    },
+    changes: deduped,
+  };
+}
+
+function inferPackageScriptChanges(policy) {
+  const changes = [];
+  if (!fs.existsSync("package.json")) return changes;
+  let pkg;
+  try {
+    pkg = readJson("package.json");
+  } catch {
+    return changes;
+  }
+  const scripts = pkg.scripts && typeof pkg.scripts === "object" ? pkg.scripts : {};
+  for (const [name, command] of Object.entries(scripts)) {
+    if (["test", "lint", "typecheck", "build"].includes(name) && !policy.bounds.pass.includes(command)) {
+      changes.push(policyChange("loosen", "bounds.pass", "add", String(command), `allow package script: ${name}`));
+    }
+    if (/publish|release|deploy/i.test(name) && !policy.bounds.pause.includes(command)) {
+      changes.push(policyChange("tighten", "bounds.pause", "add", String(command), `review package script: ${name}`));
+    }
+  }
+  return changes;
+}
+
+function inferAeonSkillChanges(policy) {
+  const changes = [];
+  if (!fs.existsSync("skills")) return changes;
+  for (const skill of listDirectories("skills")) {
+    const file = path.join("skills", skill, "SKILL.md");
+    if (!fs.existsSync(file)) continue;
+    const text = fs.readFileSync(file, "utf8");
+    const reportPath = `reports/${skill}/**`;
+    if (/report|audit|summary|write/i.test(text) && !policy.sandbox.files.write.includes(reportPath)) {
+      changes.push(policyChange("loosen", "sandbox.files.write", "add", reportPath, `skill ${skill} appears to write reports`));
+    }
+    for (const host of extractHosts(text)) {
+      if (!hostAllowed(host, policy.sandbox.network.allow)) {
+        changes.push(policyChange("loosen", "sandbox.network.allow", "add", host, `skill ${skill} references host`));
+      }
+    }
+  }
+  return changes;
+}
+
+function inferTraceChanges(policy) {
+  const changes = [];
+  for (const file of receiptFiles().slice(0, 50)) {
+    const receipt = readJson(file);
+    const trace = receipt.trace || {};
+    if (trace.action && trace.action.status === "denied" && trace.action.match && !policy.bounds.deny.includes(trace.action.match)) {
+      changes.push(policyChange("tighten", "bounds.deny", "add", trace.action.match, "preserve denied action from trace"));
+    }
+    if (trace.network && trace.network.status === "denied") {
+      for (const host of trace.network.denied || []) {
+        if (!hostAllowed(host, policy.sandbox.network.allow)) {
+          changes.push(policyChange("loosen", "sandbox.network.allow", "add", host, "previous trace requested host"));
+        }
+      }
+    }
+    if (trace.files && trace.files.status === "denied") {
+      for (const match of trace.files.matches || []) {
+        if (!policy.sandbox.files.deny.includes(match)) {
+          changes.push(policyChange("tighten", "sandbox.files.deny", "add", match, "preserve denied file path from trace"));
+        }
+      }
+    }
+  }
+  return changes;
+}
+
+function policyChange(kind, target, op, value, reason) {
+  return { kind, target, op, value, reason };
+}
+
+function dedupeChanges(changes) {
+  const seen = new Set();
+  return changes.filter((change) => {
+    const key = `${change.kind}:${change.target}:${change.op}:${change.value}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function applyPolicyChanges(policy, changes) {
+  const next = JSON.parse(JSON.stringify(policy));
+  for (const change of changes) {
+    if (change.op !== "add") continue;
+    const target = getPolicyArray(next, change.target);
+    if (!target.includes(change.value)) target.push(change.value);
+  }
+  return next;
+}
+
+function getPolicyArray(policy, target) {
+  const parts = target.split(".");
+  let cursor = policy;
+  for (const part of parts) {
+    if (!cursor[part]) cursor[part] = {};
+    cursor = cursor[part];
+  }
+  if (!Array.isArray(cursor)) throw new Error(`policy target is not an array: ${target}`);
+  return cursor;
+}
+
+function printPolicyProposal(proposal, file) {
+  console.log(`Proposal: ${proposal.id}`);
+  console.log(`File: ${path.resolve(file)}`);
+  console.log(`Tighten: ${proposal.summary.tighten}`);
+  console.log(`Loosen: ${proposal.summary.loosen}`);
+  for (const change of proposal.changes) {
+    console.log(`${change.kind.toUpperCase()} ${change.target} += ${change.value} - ${change.reason}`);
+  }
+}
+
+function loadPolicyProposal(target) {
+  const file = target === "latest" ? proposalFiles()[0] : path.join(PROPOSALS_DIR, `${target}.json`);
+  if (!file || !fs.existsSync(file)) throw new Error(`policy proposal not found: ${target}`);
+  return { proposal: readJson(file), file };
+}
+
+function proposalFiles() {
+  if (!fs.existsSync(PROPOSALS_DIR)) return [];
+  return fs.readdirSync(PROPOSALS_DIR)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => path.join(PROPOSALS_DIR, f))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+}
+
+function listDirectories(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((item) => fs.statSync(path.join(dir, item)).isDirectory());
 }
 
 function printReceiptSummary(receipt, file) {
