@@ -1,8 +1,0 @@
-name: charon
-version: 0.1.0
-description: "Runtime guardrails for Hermes tool calls. Blocks denied terminal egress, red-line file reads, secret exfil attempts, and irreversible commands; writes local receipts; redacts tool results."
-author: "CharonAI-code"
-hooks:
-  - pre_tool_call
-  - post_tool_call
-  - transform_tool_result

@@ -1,155 +1,175 @@
 # Charon
 
-Charon is a runtime boundary for autonomous agents.
+Charon is a macOS security runtime for autonomous agents.
 
-It sits between an agent runtime and the things that runtime can touch:
-secrets, files, shell commands, network destinations, prompts, tool results,
-and irreversible actions.
-
-The goal is simple: autonomous agents should be useful without receiving a
-blank check to the machine they run on.
+It gives Aeon runs a real sandbox boundary through OpenShell, so agents can do
+useful work without getting a blank check to the developer machine.
 
 ## Why Charon Exists
 
-Agent runtimes are becoming more capable, but most of their safety controls
-fall into one of three buckets:
+Agent frameworks usually rely on prompts, tool allowlists, approval flows, or
+static scanners. Those help, but they are not the same thing as runtime
+isolation.
 
-| Runtime surface | What it usually handles | What Charon adds |
-| --- | --- | --- |
-| Tool allowlists | Which tools the model may call | Per-run policy around hosts, files, secrets, and commands |
-| Static scanners | Suspicious skill/plugin content before execution | Runtime blocking when behavior crosses a red line |
-| Approval flows | Human confirmation for some actions | Default-deny boundaries for unattended or background runs |
-| Logs and traces | What happened after execution | Local receipts with allow/block decisions and redactions |
+Charon turns a simple policy into a sandboxed agent run:
 
-Charon does not replace the host runtime. It gives the runtime a stricter
-execution boundary.
+```txt
+charon.yml -> Charon compiler -> OpenShell sandbox -> agent command
+```
 
 ## Architecture
 
-Charon is adapter-based. Each host runtime has a different execution model, so
-Charon integrates at the point where that runtime actually dispatches work.
-
 ```mermaid
 flowchart LR
-  A["Agent Runtime"] --> B["Charon Adapter"]
-  B --> C["Policy Loader"]
-  B --> D["Runtime Guards"]
-  B --> E["Redaction"]
-  B --> F["Receipts"]
-
-  D --> G["Secrets"]
-  D --> H["Files"]
-  D --> I["Network"]
-  D --> J["Commands"]
-
-  F --> K["Local Audit Trail"]
+  A["Aeon Skill"] --> B["Charon CLI"]
+  B --> C["charon.yml"]
+  B --> D["OpenShell Policy"]
+  D --> E["OpenShell Sandbox"]
+  E --> F["Agent Run"]
+  B --> G["Receipt"]
+  G --> H["Verify"]
 ```
 
-Core pieces:
+| Layer | Responsibility |
+| --- | --- |
+| Charon policy | Builder-friendly file, network, command, and env rules |
+| Charon compiler | Converts `charon.yml` into OpenShell runtime config |
+| OpenShell | Real sandbox backend |
+| Receipts | Local proof of which policy/backend wrapped a run |
+| Aeon adapter | Skill-aware defaults and receipts |
 
-- **Adapter:** connects Charon to a specific runtime.
-- **Policy loader:** reads red lines and per-runtime settings.
-- **Runtime guards:** block disallowed tool, shell, file, or network behavior.
-- **Redaction:** removes secrets before they enter model context or tool output.
-- **Receipts:** records local evidence of what was allowed, blocked, or redacted.
-- **Passports:** summarizes what a skill or plugin can touch before it runs.
+## Install
 
-## Adapters
+Charon v1 is macOS-only and uses OpenShell.
 
-| Adapter | Integration style | Policy point |
-| --- | --- | --- |
-| [Aeon](./aeon) | GitHub Actions runner prelude | Before scheduled Aeon skills invoke Claude |
-| [Hermes](./hermes) | Native Hermes plugin hooks | Before Hermes tool calls execute |
+Install OpenShell:
 
-### Aeon
-
-Aeon is built for scheduled autonomous skills. Charon installs once into an
-Aeon fork and patches the workflow path before Claude runs.
-
-Charon adds runtime enforcement around:
-
-- denied secret exposure
-- prompt redaction
-- network host allowlists
-- common file-read red lines
-- irreversible shell commands
-- per-run receipts
-- skill passports
-
-### Hermes
-
-Hermes has a long-running agent loop and a plugin system. Charon runs as a
-native Hermes plugin and uses Hermes hooks such as `pre_tool_call`,
-`post_tool_call`, and `transform_tool_result`.
-
-Charon adds runtime enforcement around:
-
-- terminal egress
-- secret exfiltration commands
-- red-line file reads
-- irreversible terminal commands
-- tool-result redaction
-- per-tool receipts
-
-## Policy Model
-
-Charon policies are built around red lines: things an autonomous run should
-not cross unless the operator explicitly changes policy.
-
-Example:
-
-```yaml
-red_lines:
-  never_expose:
-    - GITHUB_TOKEN
-    - ANTHROPIC_API_KEY
-  never_read:
-    - .env
-    - ~/.ssh/**
-  never_call:
-    - pastebin.com
-    - webhook.site
-  irreversible:
-    commands:
-      - git push
-      - npm publish
-      - rm -rf
+```bash
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+brew install e2fsprogs
 ```
+
+Install Charon from this repo:
+
+```bash
+npm install
+npm link
+```
+
+Check your machine:
+
+```bash
+charon doctor
+```
+
+If OpenShell is using the macOS VM driver, `e2fsprogs` provides `mkfs.ext4`
+for first-run root filesystem creation.
 
 ## Quick Start
 
-### Aeon
+Create a policy:
 
 ```bash
-npx charon setup --push
+charon init
 ```
 
-Run this inside your Aeon fork. Charon installs itself, generates a starter
-policy, verifies the workflow patch, commits the required files, and pushes
-the change.
-
-### Hermes
+Run any command through Charon:
 
 ```bash
-git clone https://github.com/CharonAI-code/charon
-cd charon
-python3 charon/hermes/install.py
+charon run -- npm test
 ```
 
-That is enough to start. After install, keep using Aeon or Hermes normally;
-Charon runs in the background and leaves receipts when it blocks or redacts
-something.
+Inspect the latest run:
 
-More adapter-specific commands live in [Aeon](./aeon) and [Hermes](./hermes).
+```bash
+charon receipts latest
+charon verify latest
+```
 
-## Current Scope
+## Aeon
 
-Charon is intentionally local-first.
+Inside an Aeon repo:
 
-It does not require a hosted service, token, marketplace, or payment layer.
-Receipts and policies stay on the machine or repository where the runtime is
-executing.
+```bash
+charon aeon init
+charon aeon run <skill>
+```
 
-The current adapters provide practical guardrails, not a complete operating
-system sandbox. Stronger sandbox backends can be layered underneath Charon as
-the adapters mature.
+For local testing without Claude:
+
+```bash
+charon aeon run <skill> -- echo "sandbox works"
+```
+
+Charon tags receipts with the Aeon skill name, policy hash, backend, command,
+env exposure list, denied env list, timestamps, and exit code.
+
+## Policy
+
+`charon init` creates:
+
+```yaml
+version: 1
+sandbox:
+  backend: openshell
+  files:
+    read:
+      - .
+    write:
+      - .charon/**
+    deny:
+      - .env
+      - .env.*
+      - ~/.ssh/**
+      - ~/.aws/**
+      - ~/.config/gh/**
+  network:
+    allow:
+      - github.com
+      - api.github.com
+  commands:
+    deny:
+      - git push
+      - npm publish
+      - rm -rf
+  env:
+    expose: []
+    deny:
+      - ANTHROPIC_API_KEY
+      - CLAUDE_CODE_OAUTH_TOKEN
+      - GITHUB_TOKEN
+      - GH_TOKEN
+```
+
+Compile without running:
+
+```bash
+charon compile
+```
+
+## Commands
+
+```bash
+charon init
+charon doctor
+charon compile
+charon run -- <command>
+charon aeon init
+charon aeon run <skill>
+charon receipts
+charon verify latest
+```
+
+## Scope
+
+Charon v1 is intentionally narrow:
+
+- macOS only
+- Aeon first
+- OpenShell backend
+- local receipts
+- no hosted service
+- no token
+- no marketplace
+
+See [ROADMAP.md](./ROADMAP.md) for the build plan.
