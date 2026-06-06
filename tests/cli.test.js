@@ -69,6 +69,21 @@ test("denied command is blocked before launch", () => {
   assert.match(result.stderr, /DENY/);
 });
 
+test("secret-like action is denied and receipt is redacted", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const token = "github_pat_123456789012345678901234567890abcdef";
+  const result = run(["gate", "--", "curl", "-H", `Authorization: Bearer ${token}`, "https://example.com"], { cwd });
+  assert.equal(result.status, 126);
+  assert.match(result.stderr, /secret-like value/);
+
+  const receiptDir = path.join(cwd, ".charon", "receipts");
+  const receiptFile = fs.readdirSync(receiptDir).find((file) => file.endsWith(".json"));
+  const receipt = fs.readFileSync(path.join(receiptDir, receiptFile), "utf8");
+  assert.doesNotMatch(receipt, new RegExp(token));
+  assert.match(receipt, /REDACTED:github/);
+});
+
 test("paused command enters local queue and can be rejected", () => {
   const cwd = tmpdir();
   assert.equal(run(["init"], { cwd }).status, 0);

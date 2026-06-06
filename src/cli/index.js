@@ -14,6 +14,19 @@ const RECEIPTS_DIR = path.join(STATE_DIR, "receipts");
 const QUEUE_DIR = path.join(STATE_DIR, "queue");
 const GENERATED_DIR = path.join(STATE_DIR, "generated");
 const KEY_FILE = path.join(STATE_DIR, "receipt.key");
+const SECRET_PATTERNS = [
+  ["anthropic", /\bsk-ant-[A-Za-z0-9_-]{20,}/g],
+  ["openai_project", /\bsk-proj-[A-Za-z0-9_-]{20,}/g],
+  ["openai", /\bsk-[A-Za-z0-9]{20,}/g],
+  ["github", /\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{30,}/g],
+  ["google_api", /\bAIza[0-9A-Za-z_-]{35}/g],
+  ["aws_access_key", /\b(?:AKIA|ASIA|AGPA|AROA|ANPA|ANVA|ASCA|AIDA|AIPA)[0-9A-Z]{16}\b/g],
+  ["stripe", /\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{20,}/g],
+  ["slack", /\bxox[abprseo]-[A-Za-z0-9-]{10,}/g],
+  ["npm_token", /\bnpm_[A-Za-z0-9]{36,}\b/g],
+  ["jwt", /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
+  ["private_key_pem", /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g],
+];
 
 async function main(argv) {
   const [cmd, ...args] = argv;
@@ -395,6 +408,7 @@ function defaultPolicy() {
       pass: ["npm test", "git diff", "git status", "echo"],
       pause: ["git push", "gh release create", "deploy production", "terraform apply", "kubectl apply"],
       deny: ["git push --force", "npm publish", "rm -rf", "read:.env", "read:~/.ssh/**"],
+      secretAction: "deny",
     },
     sandbox: {
       backend: "openshell",
@@ -439,6 +453,9 @@ function validatePolicy(policy) {
     if (!Array.isArray(value) || !value.every((x) => typeof x === "string")) {
       throw new Error(`bounds.${key} must be a string array`);
     }
+  }
+  if (!["deny", "pause", "pass"].includes(policy.bounds.secretAction || "deny")) {
+    throw new Error("bounds.secretAction must be deny, pause, or pass");
   }
   const sandbox = policy.sandbox;
   if (!sandbox || typeof sandbox !== "object") throw new Error(`${CONFIG} missing sandbox`);
@@ -513,6 +530,13 @@ function compileOpenShell(policy, cwd) {
 
 function decideAction(command, policy) {
   const rendered = command.join(" ");
+  const secrets = scanSecrets(rendered);
+  if (secrets.length) {
+    const kinds = [...new Set(secrets.map((item) => item.kind))].join(", ");
+    const action = policy.bounds.secretAction || "deny";
+    if (action === "deny") return { verdict: "DENY", reason: `secret-like value in action: ${kinds}` };
+    if (action === "pause") return { verdict: "PAUSE", reason: `secret-like value needs review: ${kinds}` };
+  }
   const denied = [...policy.bounds.deny, ...policy.sandbox.commands.deny]
     .find((item) => actionMatches(rendered, item));
   if (denied) return { verdict: "DENY", reason: `outside bounds: ${denied}` };
@@ -524,6 +548,39 @@ function decideAction(command, policy) {
 function actionMatches(rendered, pattern) {
   if (pattern.startsWith("read:")) return rendered.includes(pattern.slice("read:".length).replace(/\*\*$/g, ""));
   return rendered.includes(pattern);
+}
+
+function scanSecrets(value) {
+  const text = String(value || "");
+  const found = [];
+  for (const [kind, pattern] of SECRET_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of text.matchAll(pattern)) {
+      found.push({ kind, length: match[0].length });
+    }
+  }
+  return found;
+}
+
+function redactText(value) {
+  let text = String(value || "");
+  const redactions = [];
+  for (const [kind, pattern] of SECRET_PATTERNS) {
+    pattern.lastIndex = 0;
+    text = text.replace(pattern, (match) => {
+      redactions.push({ kind, length: match.length });
+      return `[REDACTED:${kind}]`;
+    });
+  }
+  return { value: text, redactions };
+}
+
+function redactCommand(command) {
+  const redacted = command.map((part) => redactText(part));
+  return {
+    value: redacted.map((part) => part.value),
+    redactions: redacted.flatMap((part) => part.redactions),
+  };
 }
 
 function scrubEnv(env, policy) {
@@ -542,15 +599,19 @@ function scrubEnv(env, policy) {
 function writeReceipt(input) {
   ensureDir(RECEIPTS_DIR);
   const policyHash = hashObject(compileOpenShell(input.policy, process.cwd()).config);
+  const redactedCommand = redactCommand(input.command);
+  const redactedReason = redactText(input.reason || "");
   const body = {
     schema: "charon.receipt.v1",
     createdAt: new Date().toISOString(),
     startedAt: input.startedAt || new Date().toISOString(),
     endedAt: new Date().toISOString(),
     verdict: input.verdict,
-    reason: input.reason || "",
+    reason: redactedReason.value,
     backend: input.backend || "openshell",
-    command: input.command,
+    command: redactedCommand.value,
+    commandRedactions: redactedCommand.redactions,
+    reasonRedactions: redactedReason.redactions,
     cwd: process.cwd(),
     policyHash,
     generatedPolicy: input.generatedPolicy ? path.resolve(input.generatedPolicy) : "",
@@ -569,14 +630,18 @@ function writeReceipt(input) {
 function enqueueAction(input) {
   ensureDir(QUEUE_DIR);
   const id = `cq-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
+  const redactedCommand = redactCommand(input.command);
+  const redactedReason = redactText(input.reason || "");
   const item = {
     schema: "charon.queue.v1",
     id,
     status: "paused",
     createdAt: new Date().toISOString(),
     cwd: process.cwd(),
-    command: input.command,
-    reason: input.reason,
+    command: redactedCommand.value,
+    commandRedactions: redactedCommand.redactions,
+    reason: redactedReason.value,
+    reasonRedactions: redactedReason.redactions,
     policyHash: hashObject(compileOpenShell(input.policy, process.cwd()).config),
     meta: input.meta || {},
   };
