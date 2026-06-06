@@ -17,6 +17,10 @@ const GENERATED_DIR = path.join(STATE_DIR, "generated");
 const KEY_FILE = path.join(STATE_DIR, "receipt.key");
 const IDENTITY_FILE = path.join(STATE_DIR, "identity.json");
 const IDENTITY_KEY_FILE = path.join(STATE_DIR, "identity.key");
+const AEON_WORKFLOW = path.join(".github", "workflows", "aeon.yml");
+const AEON_WORKFLOW_BACKUP = path.join(".github", "workflows", "aeon.yml.charon.bak");
+const AEON_WORKFLOW_BEGIN = "# >>> charon";
+const AEON_WORKFLOW_END = "# <<< charon";
 const SECRET_PATTERNS = [
   ["anthropic", /\bsk-ant-[A-Za-z0-9_-]{20,}/g],
   ["openai_project", /\bsk-proj-[A-Za-z0-9_-]{20,}/g],
@@ -570,26 +574,34 @@ function aeonEnable(args) {
   ensureDir(hookDir);
   const hook = path.join(hookDir, "run-skill.js");
   const runner = path.join("scripts", "charon-aeon-runner.js");
+  const claudeWrapper = path.join("scripts", "charon-aeon-claude.js");
   ensureDir(path.dirname(runner));
   fs.writeFileSync(hook, aeonHookSource(), { mode: 0o755 });
   fs.writeFileSync(runner, aeonRunnerSource(), { mode: 0o755 });
-  writeAeonManifest({ hook, runner });
+  fs.writeFileSync(claudeWrapper, aeonClaudeWrapperSource(), { mode: 0o755 });
+  const workflowPatched = patchAeonWorkflow();
+  writeAeonManifest({ hook, runner, claudeWrapper, workflowPatched });
   patchAeonPackageScript();
   console.log("Charon Gate enabled for Aeon.");
   console.log(`- hook: ${path.resolve(hook)}`);
   console.log(`- runner: ${path.resolve(runner)}`);
+  console.log(`- claude wrapper: ${path.resolve(claudeWrapper)}`);
+  if (workflowPatched) console.log(`- workflow patched: ${path.resolve(AEON_WORKFLOW)}`);
 }
 
 function aeonStatus() {
   assertAeonRepo();
   const hook = path.join(".charon", "aeon", "run-skill.js");
   const runner = path.join("scripts", "charon-aeon-runner.js");
+  const claudeWrapper = path.join("scripts", "charon-aeon-claude.js");
   const manifest = path.join(".charon", "aeon", "manifest.json");
   const checks = [
     ["policy", fs.existsSync(CONFIG), path.resolve(CONFIG)],
     ["hook", fs.existsSync(hook), path.resolve(hook)],
     ["runner", fs.existsSync(runner), path.resolve(runner)],
+    ["claude-wrapper", fs.existsSync(claudeWrapper), path.resolve(claudeWrapper)],
     ["manifest", fs.existsSync(manifest), path.resolve(manifest)],
+    ["workflow-patched", !fs.existsSync(AEON_WORKFLOW) || aeonWorkflowPatched(), path.resolve(AEON_WORKFLOW)],
     ["skills", fs.existsSync("skills"), path.resolve("skills")],
   ];
   for (const [name, ok, detail] of checks) {
@@ -602,10 +614,13 @@ function aeonDisable() {
   assertAeonRepo();
   const hook = path.join(".charon", "aeon", "run-skill.js");
   const runner = path.join("scripts", "charon-aeon-runner.js");
+  const claudeWrapper = path.join("scripts", "charon-aeon-claude.js");
   const manifest = path.join(".charon", "aeon", "manifest.json");
   if (fs.existsSync(hook)) fs.rmSync(hook);
   if (fs.existsSync(runner)) fs.rmSync(runner);
+  if (fs.existsSync(claudeWrapper)) fs.rmSync(claudeWrapper);
   if (fs.existsSync(manifest)) fs.rmSync(manifest);
+  restoreAeonWorkflow();
   unpatchAeonPackageScript();
   console.log("Charon Gate disabled for Aeon.");
 }
@@ -1503,16 +1518,106 @@ require("../.charon/aeon/run-skill");
 `;
 }
 
+function aeonClaudeWrapperSource() {
+  return `#!/usr/bin/env node
+"use strict";
+
+const childProcess = require("child_process");
+const { createCharon } = require("charon");
+
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { prompt += chunk; });
+process.stdin.on("end", () => {
+  const model = process.env.MODEL || "";
+  const allowed = process.env.ALLOWED || "";
+  const skill = process.env.SKILL_NAME || process.env.SKILL || "";
+  const args = ["-p", "-", "--output-format", "json"];
+  if (model) args.push("--model", model);
+  if (allowed) args.push("--allowedTools", allowed);
+
+  const charon = createCharon({ cwd: process.cwd() });
+  const decision = charon.gateToolCall({
+    runtime: "aeon",
+    skill,
+    toolName: "claude",
+    toolArgs: { model, allowedTools: allowed, promptBytes: Buffer.byteLength(prompt, "utf8") },
+    context: "aeon workflow claude execution",
+  });
+
+  if (!decision.pass) {
+    console.error(\`Charon \${decision.verdict}: \${decision.reason}\`);
+    if (decision.receipt) console.error(\`Receipt: \${decision.receipt}\`);
+    process.exit(decision.pause ? 125 : 126);
+  }
+
+  const result = childProcess.spawnSync("claude", args, {
+    input: prompt,
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"],
+    env: process.env,
+  });
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.stdout) process.stdout.write(result.stdout);
+  process.exit(typeof result.status === "number" ? result.status : result.error ? 127 : 0);
+});
+`;
+}
+
 function writeAeonManifest(paths) {
   const manifest = {
     schema: "charon.aeon.v1",
     enabledAt: new Date().toISOString(),
     hook: paths.hook,
     runner: paths.runner,
+    claudeWrapper: paths.claudeWrapper,
+    workflowPatched: Boolean(paths.workflowPatched),
     command: "node scripts/charon-aeon-runner.js <skill> [-- <command>]",
   };
   ensureDir(path.join(".charon", "aeon"));
   fs.writeFileSync(path.join(".charon", "aeon", "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+function patchAeonWorkflow() {
+  if (!fs.existsSync(AEON_WORKFLOW)) return false;
+  let text = fs.readFileSync(AEON_WORKFLOW, "utf8");
+  if (text.includes(AEON_WORKFLOW_BEGIN)) return true;
+  text = text.replace(
+    "npm install -g @anthropic-ai/claude-code",
+    "npm install -g @anthropic-ai/claude-code github:CharonAI-code/charon",
+  );
+  const target = 'if ! CLAUDE_OUTPUT=$(echo "$PROMPT" | claude -p - \\';
+  if (!text.includes(target)) return false;
+  ensureDir(path.dirname(AEON_WORKFLOW_BACKUP));
+  if (!fs.existsSync(AEON_WORKFLOW_BACKUP)) fs.writeFileSync(AEON_WORKFLOW_BACKUP, text);
+  const replacement = [
+    AEON_WORKFLOW_BEGIN,
+    '          export SKILL_NAME="$SKILL_NAME"',
+    '          if ! CLAUDE_OUTPUT=$(echo "$PROMPT" | node scripts/charon-aeon-claude.js \\',
+    AEON_WORKFLOW_END,
+  ].join("\n");
+  text = text.replace(target, replacement);
+  fs.writeFileSync(AEON_WORKFLOW, text);
+  return true;
+}
+
+function restoreAeonWorkflow() {
+  if (fs.existsSync(AEON_WORKFLOW_BACKUP)) {
+    fs.copyFileSync(AEON_WORKFLOW_BACKUP, AEON_WORKFLOW);
+    fs.rmSync(AEON_WORKFLOW_BACKUP);
+    return;
+  }
+  if (!fs.existsSync(AEON_WORKFLOW)) return;
+  let text = fs.readFileSync(AEON_WORKFLOW, "utf8");
+  text = text.replace(
+    /# >>> charon\n\s*export SKILL_NAME="\$SKILL_NAME"\n\s*if ! CLAUDE_OUTPUT=\$\(echo "\$PROMPT" \| node scripts\/charon-aeon-claude\.js \\\n# <<< charon/g,
+    'if ! CLAUDE_OUTPUT=$(echo "$PROMPT" | claude -p - \\',
+  );
+  fs.writeFileSync(AEON_WORKFLOW, text);
+}
+
+function aeonWorkflowPatched() {
+  return fs.existsSync(AEON_WORKFLOW) && fs.readFileSync(AEON_WORKFLOW, "utf8").includes(AEON_WORKFLOW_BEGIN);
 }
 
 function patchAeonPackageScript() {

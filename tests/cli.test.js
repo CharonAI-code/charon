@@ -336,15 +336,34 @@ test("aeon init and run tag receipts with skill name", () => {
 test("aeon enable writes local gate hook", () => {
   const cwd = tmpdir();
   fs.mkdirSync(path.join(cwd, "skills", "demo"), { recursive: true });
+  fs.mkdirSync(path.join(cwd, ".github", "workflows"), { recursive: true });
   fs.writeFileSync(path.join(cwd, "aeon.yml"), "demo: { enabled: true }\n");
   fs.writeFileSync(path.join(cwd, "skills", "demo", "SKILL.md"), "# Demo\n");
   fs.writeFileSync(path.join(cwd, "package.json"), JSON.stringify({ scripts: {} }));
+  fs.writeFileSync(path.join(cwd, ".github", "workflows", "aeon.yml"), [
+    "steps:",
+    "  - name: Install Claude Code",
+    "    run: npm install -g @anthropic-ai/claude-code",
+    "  - name: Run skill",
+    "    run: |",
+    "      if ! CLAUDE_OUTPUT=$(echo \"$PROMPT\" | claude -p - \\",
+    "        --model \"$MODEL\" --allowedTools \"$ALLOWED\" \\",
+    "        --output-format json 2>&1); then",
+    "        exit 1",
+    "      fi",
+    "",
+  ].join("\n"));
 
   const result = run(["aeon", "enable"], { cwd });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(fs.existsSync(path.join(cwd, ".charon", "aeon", "run-skill.js")));
   assert.ok(fs.existsSync(path.join(cwd, "scripts", "charon-aeon-runner.js")));
   assert.ok(fs.existsSync(path.join(cwd, ".charon", "aeon", "manifest.json")));
+  assert.ok(fs.existsSync(path.join(cwd, "scripts", "charon-aeon-claude.js")));
+  const workflow = fs.readFileSync(path.join(cwd, ".github", "workflows", "aeon.yml"), "utf8");
+  assert.match(workflow, /# >>> charon/);
+  assert.match(workflow, /node scripts\/charon-aeon-claude\.js/);
+  assert.match(workflow, /github:CharonAI-code\/charon/);
   assert.match(fs.readFileSync(path.join(cwd, "package.json"), "utf8"), /charon:aeon/);
 
   const status = run(["aeon", "status"], { cwd });
@@ -355,6 +374,10 @@ test("aeon enable writes local gate hook", () => {
   assert.equal(disable.status, 0, disable.stderr);
   assert.equal(fs.existsSync(path.join(cwd, ".charon", "aeon", "run-skill.js")), false);
   assert.equal(fs.existsSync(path.join(cwd, "scripts", "charon-aeon-runner.js")), false);
+  assert.equal(fs.existsSync(path.join(cwd, "scripts", "charon-aeon-claude.js")), false);
+  const restored = fs.readFileSync(path.join(cwd, ".github", "workflows", "aeon.yml"), "utf8");
+  assert.doesNotMatch(restored, /# >>> charon/);
+  assert.match(restored, /claude -p -/);
 });
 
 function hashLine(output) {
