@@ -64,9 +64,42 @@ test("run uses mocked OpenShell and writes verifiable receipt", () => {
 test("denied command is blocked before launch", () => {
   const cwd = tmpdir();
   assert.equal(run(["init"], { cwd }).status, 0);
-  const result = run(["run", "--", "sh", "-lc", "git push"], { cwd });
+  const result = run(["gate", "--", "sh", "-lc", "npm publish"], { cwd });
   assert.equal(result.status, 126);
-  assert.match(result.stderr, /Blocked by Charon policy/);
+  assert.match(result.stderr, /DENY/);
+});
+
+test("paused command enters local queue and can be rejected", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const result = run(["gate", "--", "sh", "-lc", "git push"], { cwd });
+  assert.equal(result.status, 125);
+  assert.match(result.stderr, /PAUSE/);
+
+  const queue = run(["queue"], { cwd });
+  assert.equal(queue.status, 0, queue.stderr);
+  assert.match(queue.stdout, /requires release review/);
+  const id = queue.stdout.trim().split(/\s+/)[0];
+
+  const reject = run(["reject", id], { cwd });
+  assert.equal(reject.status, 0, reject.stderr);
+  assert.match(reject.stdout, /Rejected/);
+});
+
+test("history aliases receipts", () => {
+  const cwd = tmpdir();
+  const mock = path.join(cwd, "openshell-mock.sh");
+  fs.writeFileSync(mock, "#!/bin/sh\nshift\nexec \"$@\"\n");
+  fs.chmodSync(mock, 0o755);
+  assert.equal(run(["init"], { cwd }).status, 0);
+  assert.equal(run(["gate", "--", "node", "-e", "console.log('history')"], {
+    cwd,
+    env: { CHARON_OPEN_SHELL_MOCK: mock },
+  }).status, 0);
+
+  const history = run(["history", "latest"], { cwd });
+  assert.equal(history.status, 0, history.stderr);
+  assert.match(history.stdout, /Verdict: PASS/);
 });
 
 test("aeon init and run tag receipts with skill name", () => {
@@ -89,6 +122,17 @@ test("aeon init and run tag receipts with skill name", () => {
   const latest = run(["receipts", "latest"], { cwd });
   assert.match(latest.stdout, /Runtime: aeon/);
   assert.match(latest.stdout, /Skill: demo/);
+});
+
+test("aeon enable writes local gate hook", () => {
+  const cwd = tmpdir();
+  fs.mkdirSync(path.join(cwd, "skills", "demo"), { recursive: true });
+  fs.writeFileSync(path.join(cwd, "aeon.yml"), "demo: { enabled: true }\n");
+  fs.writeFileSync(path.join(cwd, "skills", "demo", "SKILL.md"), "# Demo\n");
+
+  const result = run(["aeon", "enable"], { cwd });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(path.join(cwd, ".charon", "aeon", "run-skill.js")));
 });
 
 function hashLine(output) {

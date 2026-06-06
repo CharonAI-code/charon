@@ -1,46 +1,38 @@
 # Charon
 
-Charon is a macOS security runtime for autonomous agents.
+Charon is a local action gate and sandbox runtime for autonomous agents.
 
-It gives Aeon runs a real sandbox boundary through OpenShell, so agents can do
-useful work without getting a blank check to the developer machine.
+It lets agents work inside defined bounds. Every action gets a simple decision:
+
+```txt
+PASS  -> run inside the sandbox
+PAUSE -> wait for release review
+DENY  -> refuse before execution
+```
+
+Charon v1 is macOS-first, Aeon-first, and backed by OpenShell for real runtime
+isolation.
 
 ## Why Charon Exists
 
-Agent frameworks usually rely on prompts, tool allowlists, approval flows, or
-static scanners. Those help, but they are not the same thing as runtime
-isolation.
+Agent instructions are soft. Runtime bounds are harder.
 
-Charon turns a simple policy into a sandboxed agent run:
-
-```txt
-charon.yml -> Charon compiler -> OpenShell sandbox -> agent command
-```
-
-## Architecture
+Charon sits before an agent action, evaluates it against `charon.yml`, and only
+runs passing actions through an OpenShell sandbox.
 
 ```mermaid
 flowchart LR
-  A["Aeon Skill"] --> B["Charon CLI"]
-  B --> C["charon.yml"]
-  B --> D["OpenShell Policy"]
-  D --> E["OpenShell Sandbox"]
-  E --> F["Agent Run"]
-  B --> G["Receipt"]
-  G --> H["Verify"]
+  A["Aeon skill / agent command"] --> B["Charon Gate"]
+  B --> C["charon.yml bounds"]
+  C --> D{"PASS / PAUSE / DENY"}
+  D -->|PASS| E["OpenShell sandbox"]
+  D -->|PAUSE| F["Local queue"]
+  D -->|DENY| G["Receipt"]
+  E --> H["Agent run"]
+  H --> I["Receipt + history"]
 ```
 
-| Layer | Responsibility |
-| --- | --- |
-| Charon policy | Builder-friendly file, network, command, and env rules |
-| Charon compiler | Converts `charon.yml` into OpenShell runtime config |
-| OpenShell | Real sandbox backend |
-| Receipts | Local proof of which policy/backend wrapped a run |
-| Aeon adapter | Skill-aware defaults and receipts |
-
 ## Install
-
-Charon v1 is macOS-only and uses OpenShell.
 
 Install OpenShell:
 
@@ -62,29 +54,26 @@ Check your machine:
 charon doctor
 ```
 
-If OpenShell is using the macOS VM driver, `e2fsprogs` provides `mkfs.ext4`
-for first-run root filesystem creation.
-
 ## Quick Start
-
-Create a policy:
 
 ```bash
 charon init
-```
-
-Run any command through Charon:
-
-```bash
-charon run -- npm test
-```
-
-Inspect the latest run:
-
-```bash
-charon receipts latest
+charon gate -- npm test
+charon history latest
 charon verify latest
 ```
+
+Actions can pass, pause, or deny:
+
+```bash
+charon gate -- git push
+charon queue
+charon approve <id>
+charon reject <id>
+```
+
+`charon run -- <command>` still works as a compatibility alias for
+`charon gate -- <command>`.
 
 ## Aeon
 
@@ -92,6 +81,7 @@ Inside an Aeon repo:
 
 ```bash
 charon aeon init
+charon aeon enable
 charon aeon run <skill>
 ```
 
@@ -110,6 +100,24 @@ env exposure list, denied env list, timestamps, and exit code.
 
 ```yaml
 version: 1
+bounds:
+  pass:
+    - npm test
+    - git diff
+    - git status
+    - echo
+  pause:
+    - git push
+    - gh release create
+    - deploy production
+    - terraform apply
+    - kubectl apply
+  deny:
+    - git push --force
+    - npm publish
+    - rm -rf
+    - read:.env
+    - read:~/.ssh/**
 sandbox:
   backend: openshell
   files:
@@ -129,7 +137,7 @@ sandbox:
       - api.github.com
   commands:
     deny:
-      - git push
+      - git push --force
       - npm publish
       - rm -rf
   env:
@@ -153,11 +161,33 @@ charon compile
 charon init
 charon doctor
 charon compile
-charon run -- <command>
-charon aeon init
-charon aeon run <skill>
-charon receipts
+charon gate -- <command>
+charon queue
+charon approve <id>
+charon reject <id>
+charon history [list|latest|inspect <id|latest>]
+charon status <id|latest>
 charon verify latest
+charon aeon init
+charon aeon enable
+charon aeon run <skill>
+```
+
+## Repository Structure
+
+```txt
+src/
+  cli/
+  core/
+    gate/
+    policy/
+    queue/
+    receipts/
+    sandbox/
+    security/
+  integrations/
+    aeon/
+  utils/
 ```
 
 ## Scope
@@ -166,8 +196,9 @@ Charon v1 is intentionally narrow:
 
 - macOS only
 - Aeon first
+- local action gate
 - OpenShell backend
-- local receipts
+- local queue and receipts
 - no hosted service
 - no token
 - no marketplace
