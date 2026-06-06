@@ -121,27 +121,12 @@ red_lines:
 ### Aeon
 
 ```bash
-npx charon setup --commit
+npx charon setup --push
 ```
 
 Run this inside your Aeon fork. Charon installs itself, generates a starter
-policy, verifies the workflow patch, and commits the required files.
-
-Then push your Aeon fork:
-
-```bash
-git push
-```
-
-Useful follow-ups:
-
-```bash
-npx charon passport
-npx charon receipts latest
-npx charon sync --commit
-```
-
-Use `sync` after pulling upstream Aeon updates.
+policy, verifies the workflow patch, commits the required files, and pushes
+the change.
 
 ### Hermes
 
@@ -159,6 +144,14 @@ npm run smoke
 npm test
 cd ../..
 python3 -m unittest discover -s hermes/tests -p 'test_*.py'
+```
+
+## Useful Commands
+
+```bash
+npx charon passport
+npx charon receipts latest
+npx charon sync --push
 ```
 
 ## Current Scope

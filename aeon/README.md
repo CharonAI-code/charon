@@ -11,17 +11,16 @@ Charon installs into an Aeon fork, patches the skill execution path, and enforce
 Recommended one-command setup inside an Aeon fork:
 
 ```bash
-npx charon setup --commit
-git push
+npx charon setup --push
 ```
 
 This installs Charon, generates a starter policy, verifies the integration,
-and commits the required files.
+commits the required files, and pushes the change.
 
 After pulling upstream Aeon updates:
 
 ```bash
-npx charon sync --commit
+npx charon sync --push
 ```
 
 This re-applies the workflow guard and verifies Charon is still active.
