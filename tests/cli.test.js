@@ -84,6 +84,33 @@ test("secret-like action is denied and receipt is redacted", () => {
   assert.match(receipt, /REDACTED:github/);
 });
 
+test("boundary trace records denied network host", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const result = run(["gate", "--", "curl", "https://webhook.site/demo"], { cwd });
+  assert.equal(result.status, 126);
+  assert.match(result.stderr, /network host outside bounds/);
+
+  const trace = run(["trace", "latest"], { cwd });
+  assert.equal(trace.status, 0, trace.stderr);
+  assert.match(trace.stdout, /Network: denied - webhook\.site/);
+  assert.match(trace.stdout, /Sandbox: not_launched/);
+});
+
+test("boundary trace records denied file path", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const result = run(["gate", "--", "cat", ".env"], { cwd });
+  assert.equal(result.status, 126);
+  assert.match(result.stderr, /denied file path/);
+
+  const latest = run(["receipts", "inspect", "latest"], { cwd });
+  assert.equal(latest.status, 0, latest.stderr);
+  assert.match(latest.stdout, /"trace"/);
+  assert.match(latest.stdout, /"files"/);
+  assert.match(latest.stdout, /"status": "denied"/);
+});
+
 test("paused command enters local queue and can be rejected", () => {
   const cwd = tmpdir();
   assert.equal(run(["init"], { cwd }).status, 0);

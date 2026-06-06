@@ -47,6 +47,8 @@ async function main(argv) {
       return rejectCommand(args);
     case "history":
       return receiptsCommand(args);
+    case "trace":
+      return traceCommand(args);
     case "status":
       return statusCommand(args);
     case "run":
@@ -82,6 +84,7 @@ Usage:
   charon approve <id>
   charon reject <id>
   charon history [list|latest|inspect <id|latest>]
+  charon trace <id|latest>
   charon status <id|latest>
   charon run -- <command>
   charon aeon init
@@ -160,7 +163,7 @@ function gateCommand(args, meta = {}) {
 
   const policy = loadPolicy();
   const decision = meta.approvedQueueId
-    ? { verdict: "PASS", reason: `approved paused action: ${meta.approvedQueueId}` }
+    ? buildApprovedDecision(command, policy, meta.approvedQueueId)
     : decideAction(command, policy);
   if (decision.verdict === "DENY") {
     const receipt = writeReceipt({
@@ -169,6 +172,7 @@ function gateCommand(args, meta = {}) {
       command,
       policy,
       meta,
+      trace: completeTrace(decision.trace, "not_launched"),
       exitCode: 126,
     });
     console.error(`DENY ${decision.reason}`);
@@ -186,6 +190,7 @@ function gateCommand(args, meta = {}) {
       command,
       policy,
       meta: { ...meta, queueId: item.id },
+      trace: completeTrace(decision.trace, "not_launched"),
       exitCode: 125,
     });
     console.error(`PAUSE ${decision.reason}`);
@@ -219,6 +224,10 @@ function gateCommand(args, meta = {}) {
     startedAt,
     backend: "openshell",
     generatedPolicy: policyPath,
+    trace: completeTrace(decision.trace, exitCode === 0 ? "launched" : "error", {
+      backend: "openshell",
+      exitCode,
+    }),
   });
   console.log(`Charon receipt: ${receipt.path}`);
   process.exitCode = exitCode;
@@ -292,6 +301,14 @@ function statusCommand(args) {
     return;
   }
   return receiptsCommand(["inspect", target]);
+}
+
+function traceCommand(args) {
+  const target = args[0] || "latest";
+  const files = receiptFiles();
+  const file = target === "latest" ? files[0] : files.find((f) => receiptId(f) === target) || target;
+  if (!file || !fs.existsSync(file)) throw new Error(`receipt not found: ${target}`);
+  printTrace(readJson(file), file);
 }
 
 function buildOpenShellCommand(command, policyPath) {
@@ -530,19 +547,109 @@ function compileOpenShell(policy, cwd) {
 
 function decideAction(command, policy) {
   const rendered = command.join(" ");
-  const secrets = scanSecrets(rendered);
-  if (secrets.length) {
-    const kinds = [...new Set(secrets.map((item) => item.kind))].join(", ");
-    const action = policy.bounds.secretAction || "deny";
-    if (action === "deny") return { verdict: "DENY", reason: `secret-like value in action: ${kinds}` };
-    if (action === "pause") return { verdict: "PAUSE", reason: `secret-like value needs review: ${kinds}` };
+  const trace = buildBoundaryTrace(command, policy);
+  if (trace.secrets.status === "denied") {
+    return { verdict: "DENY", reason: `secret-like value in action: ${trace.secrets.kinds.join(", ")}`, trace };
   }
-  const denied = [...policy.bounds.deny, ...policy.sandbox.commands.deny]
+  if (trace.secrets.status === "paused") {
+    return { verdict: "PAUSE", reason: `secret-like value needs review: ${trace.secrets.kinds.join(", ")}`, trace };
+  }
+  if (trace.files.status === "denied") {
+    return { verdict: "DENY", reason: `denied file path requested: ${trace.files.matches.join(", ")}`, trace };
+  }
+  if (trace.network.status === "denied") {
+    return { verdict: "DENY", reason: `network host outside bounds: ${trace.network.denied.join(", ")}`, trace };
+  }
+  if (trace.action.status === "denied") {
+    return { verdict: "DENY", reason: `outside bounds: ${trace.action.match}`, trace };
+  }
+  if (trace.action.status === "paused") {
+    return { verdict: "PAUSE", reason: `requires release review: ${trace.action.match}`, trace };
+  }
+  return { verdict: "PASS", reason: "inside bounds", trace };
+}
+
+function buildApprovedDecision(command, policy, queueId) {
+  const trace = buildBoundaryTrace(command, policy);
+  trace.action = { status: "approved", match: queueId };
+  return { verdict: "PASS", reason: `approved paused action: ${queueId}`, trace };
+}
+
+function buildBoundaryTrace(command, policy) {
+  const rendered = command.join(" ");
+  const secrets = scanSecrets(rendered);
+  const secretKinds = [...new Set(secrets.map((item) => item.kind))];
+  const deniedFiles = detectDeniedFiles(rendered, policy);
+  const network = detectNetworkHosts(rendered, policy);
+  const deniedAction = [...policy.bounds.deny, ...policy.sandbox.commands.deny]
     .find((item) => actionMatches(rendered, item));
-  if (denied) return { verdict: "DENY", reason: `outside bounds: ${denied}` };
-  const paused = policy.bounds.pause.find((item) => actionMatches(rendered, item));
-  if (paused) return { verdict: "PAUSE", reason: `requires release review: ${paused}` };
-  return { verdict: "PASS", reason: "inside bounds" };
+  const pausedAction = policy.bounds.pause.find((item) => actionMatches(rendered, item));
+  const secretAction = policy.bounds.secretAction || "deny";
+  return {
+    schema: "charon.trace.v1",
+    identity: {
+      status: "unsigned",
+      runtime: "local",
+    },
+    secrets: secrets.length
+      ? { status: secretAction === "pause" ? "paused" : secretAction === "pass" ? "passed" : "denied", kinds: secretKinds, count: secrets.length }
+      : { status: "clean", kinds: [], count: 0 },
+    files: deniedFiles.length
+      ? { status: "denied", matches: deniedFiles }
+      : { status: "clean", matches: [] },
+    network,
+    action: deniedAction
+      ? { status: "denied", match: deniedAction }
+      : pausedAction
+        ? { status: "paused", match: pausedAction }
+        : { status: "passed", match: "" },
+    sandbox: {
+      status: "pending",
+      backend: policy.sandbox.backend || "openshell",
+    },
+  };
+}
+
+function completeTrace(trace, sandboxStatus, extra = {}) {
+  return {
+    ...trace,
+    sandbox: {
+      ...(trace && trace.sandbox ? trace.sandbox : {}),
+      status: sandboxStatus,
+      ...extra,
+    },
+  };
+}
+
+function detectDeniedFiles(rendered, policy) {
+  return policy.sandbox.files.deny.filter((item) => rendered.includes(stripGlob(item)));
+}
+
+function detectNetworkHosts(rendered, policy) {
+  const hosts = extractHosts(rendered);
+  if (!hosts.length) return { status: "not_requested", hosts: [], denied: [], allowed: [] };
+  const allowed = hosts.filter((host) => hostAllowed(host, policy.sandbox.network.allow));
+  const denied = hosts.filter((host) => !hostAllowed(host, policy.sandbox.network.allow));
+  return denied.length
+    ? { status: "denied", hosts, denied, allowed }
+    : { status: "allowed", hosts, denied: [], allowed };
+}
+
+function extractHosts(value) {
+  const hosts = new Set();
+  const urlRe = /\bhttps?:\/\/([a-zA-Z0-9.-]+)(?::\d+)?(?:[/?#][^\s"']*)?/g;
+  for (const match of String(value || "").matchAll(urlRe)) {
+    hosts.add(match[1].toLowerCase());
+  }
+  return [...hosts];
+}
+
+function hostAllowed(host, allowlist) {
+  return allowlist.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+}
+
+function stripGlob(value) {
+  return expandPath(value).replace(/\*\*$/g, "").replace(/\*$/g, "").replace(/\/$/g, "");
 }
 
 function actionMatches(rendered, pattern) {
@@ -618,6 +725,7 @@ function writeReceipt(input) {
     exposedEnv: input.policy.sandbox.env.expose,
     deniedEnv: input.policy.sandbox.env.deny,
     exitCode: input.exitCode,
+    trace: input.trace || completeTrace(buildBoundaryTrace(input.command, input.policy), "unknown"),
     meta: input.meta || {},
   };
   body.signature = signObject(body);
@@ -696,6 +804,32 @@ function printReceiptSummary(receipt, file) {
   console.log(`Backend: ${receipt.backend}`);
   console.log(`Policy: ${receipt.policyHash}`);
   console.log(`Exit: ${receipt.exitCode}`);
+}
+
+function printTrace(receipt, file) {
+  const trace = receipt.trace || {};
+  console.log(`Trace: ${receiptId(file)}`);
+  console.log(`Verdict: ${receipt.verdict}`);
+  console.log(`Reason: ${receipt.reason || ""}`);
+  console.log(`Identity: ${trace.identity ? trace.identity.status : "unknown"}`);
+  console.log(`Secrets: ${trace.secrets ? formatTracePart(trace.secrets) : "unknown"}`);
+  console.log(`Files: ${trace.files ? formatTracePart(trace.files) : "unknown"}`);
+  console.log(`Network: ${trace.network ? formatTracePart(trace.network) : "unknown"}`);
+  console.log(`Action: ${trace.action ? formatTracePart(trace.action) : "unknown"}`);
+  console.log(`Sandbox: ${trace.sandbox ? formatTracePart(trace.sandbox) : "unknown"}`);
+  console.log(`Receipt: ${path.resolve(file)}`);
+}
+
+function formatTracePart(part) {
+  const details = [
+    part.match,
+    part.kinds && part.kinds.length ? part.kinds.join(",") : "",
+    part.matches && part.matches.length ? part.matches.join(",") : "",
+    part.denied && part.denied.length ? part.denied.join(",") : "",
+    part.hosts && part.hosts.length && part.status !== "denied" ? part.hosts.join(",") : "",
+    part.backend || "",
+  ].filter(Boolean).join(" ");
+  return details ? `${part.status} - ${details}` : part.status;
 }
 
 function signObject(obj) {
