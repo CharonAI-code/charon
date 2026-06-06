@@ -52,6 +52,7 @@ Core pieces:
 - **Runtime guards:** block disallowed tool, shell, file, or network behavior.
 - **Redaction:** removes secrets before they enter model context or tool output.
 - **Receipts:** records local evidence of what was allowed, blocked, or redacted.
+- **Passports:** summarizes what a skill or plugin can touch before it runs.
 
 ## Adapters
 
@@ -73,6 +74,7 @@ Charon adds runtime enforcement around:
 - common file-read red lines
 - irreversible shell commands
 - per-run receipts
+- skill passports
 
 ### Hermes
 
@@ -129,12 +131,20 @@ In an Aeon fork:
 
 ```bash
 npx charon setup --commit
+npx charon passport
 ```
 
 After pulling Aeon upstream updates:
 
 ```bash
 npx charon sync --commit
+```
+
+After an Aeon run:
+
+```bash
+npx charon receipts list
+npx charon receipts latest
 ```
 
 Hermes:

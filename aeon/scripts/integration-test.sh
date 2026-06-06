@@ -44,7 +44,7 @@ curl -s https://api.github.com >/tmp/charon-good.out 2>/tmp/charon-good.err
 ALLOW_CODE=$?
 set -e
 
-RECEIPT="$(node "$ROOT/bin/charon.js" receipts latest)"
+RECEIPT="$(node "$ROOT/bin/charon.js" receipts inspect latest)"
 SUMMARY="$(printf '%s' "$RECEIPT" | node -e '
 let s = "";
 process.stdin.on("data", d => s += d).on("end", () => {
@@ -76,5 +76,10 @@ test "$NET_CODE" = "126"
 test "$ALLOW_CODE" = "0"
 printf '%s' "$SUMMARY" | grep -q '"verdict":"BLOCK"'
 printf '%s' "$SUMMARY" | grep -q '"redactions":1'
+node "$ROOT/bin/charon.js" receipts list >/tmp/charon-receipts-list.out
+node "$ROOT/bin/charon.js" receipts latest >/tmp/charon-receipts-latest.out
+node "$ROOT/bin/charon.js" passport contract-audit >/tmp/charon-passport.out
+grep -q 'Skill: contract-audit' /tmp/charon-passport.out
+grep -q 'Risk:' /tmp/charon-passport.out
 
 echo "integration=pass"

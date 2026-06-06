@@ -35,6 +35,9 @@ function main() {
       case "compile":
         compile();
         break;
+      case "passport":
+        passport(args);
+        break;
       case "receipts":
         receipts(args);
         break;
@@ -65,8 +68,14 @@ Usage:
   charon status       Show installation status
   charon uninstall    Remove Charon workflow integration
   charon compile      Generate starter policies from installed Aeon skills
+  charon passport [skill]
+                      Show skill blast-radius passports
+  charon receipts list
+                      List run receipts
   charon receipts latest
-                      Show the newest run receipt
+                      Show the newest run receipt summary
+  charon receipts inspect <id|latest>
+                      Show one receipt as JSON
 
 Install creates:
   - ${CONFIG}
@@ -200,17 +209,80 @@ function compile() {
 }
 
 function receipts(args) {
-  if (args[0] !== "latest") die("Usage: charon receipts latest");
   const root = findAeonRoot(process.cwd());
   process.chdir(root);
   if (!fs.existsSync(RECEIPTS)) die(`No receipt directory found at ${RECEIPTS}`);
-  const files = fs
-    .readdirSync(RECEIPTS)
-    .filter((f) => f.endsWith(".json"))
-    .map((f) => path.join(RECEIPTS, f))
-    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  const files = receiptFiles();
   if (!files.length) die("No receipts found.");
-  console.log(fs.readFileSync(files[0], "utf8"));
+
+  const sub = args[0] || "latest";
+  if (sub === "list") {
+    const limit = numberArg(args, "--limit", 20);
+    for (const file of files.slice(0, limit)) {
+      const receipt = readReceipt(file);
+      const counts = eventCounts(receipt);
+      console.log([
+        receiptId(file),
+        pad(receipt.verdict || "UNKNOWN", 7),
+        receipt.skill || "unknown",
+        `blocked=${counts.blocked}`,
+        `allowed=${counts.allowed}`,
+        receipt.createdAt || "",
+      ].filter(Boolean).join("  "));
+    }
+    return;
+  }
+
+  if (sub === "latest") {
+    printReceiptSummary(readReceipt(files[0]), files[0]);
+    return;
+  }
+
+  if (sub === "inspect") {
+    const target = args[1] || "latest";
+    const file = target === "latest" ? files[0] : findReceipt(target, files);
+    if (!file) die(`No receipt found for ${target}`);
+    console.log(fs.readFileSync(file, "utf8"));
+    return;
+  }
+
+  die("Usage: charon receipts list | latest | inspect <id|latest>");
+}
+
+function passport(args) {
+  const root = findAeonRoot(process.cwd());
+  process.chdir(root);
+  assertAeonRepo(root);
+
+  const target = args.find((arg) => !arg.startsWith("-"));
+  const json = args.includes("--json");
+  const passports = buildPassports();
+  const selected = target ? passports.filter((p) => p.skill === target) : passports;
+  if (target && !selected.length) die(`No Aeon skill found: ${target}`);
+
+  if (json) {
+    console.log(JSON.stringify(selected, null, 2));
+    return;
+  }
+
+  if (target) {
+    printPassport(selected[0], { detailed: true });
+    return;
+  }
+
+  console.log(`Charon passports (${selected.length} Aeon skills)`);
+  console.log("");
+  for (const item of selected) {
+    console.log([
+      pad(item.risk.toUpperCase(), 6),
+      item.skill,
+      `hosts=${item.network.hosts.length}`,
+      `secrets=${item.secrets.length}`,
+      item.irreversible ? "irreversible=yes" : "irreversible=no",
+    ].join("  "));
+  }
+  console.log("");
+  console.log("Inspect one skill with: charon passport <skill>");
 }
 
 function assertAeonRepo(root) {
@@ -764,6 +836,161 @@ function renderSkillPolicy(skill, hosts, secrets) {
   const indentedHosts = hosts.length ? hosts.map((h) => `        - ${h}`).join("\n") : "        # review_required: no hosts inferred";
   const indentedSecrets = secrets.length ? secrets.map((s) => `      - ${s}`).join("\n") : "      []";
   return `  ${skill}:\n    secrets:\n${indentedSecrets}\n    network:\n      allow:\n${indentedHosts}\n`;
+}
+
+function receiptFiles() {
+  return fs
+    .readdirSync(RECEIPTS)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => path.join(RECEIPTS, f))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+}
+
+function receiptId(file) {
+  return path.basename(file, ".json");
+}
+
+function readReceipt(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (err) {
+    die(`Could not parse receipt ${file}: ${err.message}`);
+  }
+}
+
+function findReceipt(id, files) {
+  return files.find((file) => receiptId(file) === id || path.basename(file) === id);
+}
+
+function eventCounts(receipt) {
+  const events = Array.isArray(receipt.events) ? receipt.events : [];
+  return {
+    blocked: events.filter((event) => event.decision === "block").length,
+    allowed: events.filter((event) => event.decision === "allow").length,
+  };
+}
+
+function printReceiptSummary(receipt, file) {
+  const counts = eventCounts(receipt);
+  console.log(`Receipt: ${receiptId(file)}`);
+  console.log(`Verdict: ${receipt.verdict || "UNKNOWN"}`);
+  console.log(`Skill: ${receipt.skill || "unknown"}`);
+  console.log(`Created: ${receipt.createdAt || "unknown"}`);
+  console.log(`Policy: ${receipt.policy || CONFIG}`);
+  console.log(`Allowed events: ${counts.allowed}`);
+  console.log(`Blocked events: ${counts.blocked}`);
+  if (receipt.redaction && receipt.redaction.scanned) {
+    console.log(`Prompt redactions: ${receipt.redaction.replacements || 0}`);
+  }
+  const blocked = (receipt.events || []).filter((event) => event.decision === "block");
+  if (blocked.length) {
+    console.log("");
+    console.log("Blocked:");
+    for (const event of blocked) {
+      const detail = event.host || event.path || event.pattern || event.reason || event.type || "unknown";
+      console.log(`- ${event.command || "command"} ${event.type || "event"} ${detail}`);
+    }
+  }
+}
+
+function numberArg(args, name, fallback) {
+  const idx = args.indexOf(name);
+  if (idx === -1) return fallback;
+  const value = Number(args[idx + 1]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function pad(value, size) {
+  const text = String(value);
+  return text.length >= size ? text : text + " ".repeat(size - text.length);
+}
+
+function buildPassports() {
+  return listSkillDirs().map((skill) => {
+    const file = path.join("skills", skill, "SKILL.md");
+    const text = fs.readFileSync(file, "utf8");
+    const hosts = [...extractHosts(text)].sort();
+    const secrets = [...extractSecrets(text)].sort();
+    const writes = inferWrites(text);
+    const actions = inferActions(text);
+    const irreversible = actions.some((action) => action.irreversible);
+    const risk = scoreRisk({ hosts, secrets, writes, actions, text });
+    return {
+      skill,
+      risk,
+      secrets,
+      network: { hosts },
+      files: { writes },
+      actions: actions.map((action) => action.name),
+      irreversible,
+      policy: {
+        generated: fs.existsSync(GENERATED),
+        config: fs.existsSync(CONFIG),
+      },
+    };
+  });
+}
+
+function inferWrites(text) {
+  const writes = new Set();
+  const lower = text.toLowerCase();
+  const candidates = [
+    ["articles/", /\barticles?\//i],
+    ["memory/", /\bmemory\//i],
+    [".outputs/", /\.outputs\//i],
+    ["issues/prs", /\b(gh\s+issue|github issue|pull request|open a pr|create pr)\b/i],
+    ["notifications", /\b(slack|discord|telegram|sendgrid|email|notify|notification)\b/i],
+    ["external social", /\b(twitter|x\.com|farcaster|dev\.to|tweet|social post|publish article)\b/i],
+  ];
+  for (const [name, re] of candidates) {
+    if (re.test(text) || lower.includes(name)) writes.add(name);
+  }
+  return [...writes].sort();
+}
+
+function inferActions(text) {
+  const actions = [];
+  const patterns = [
+    ["external_api", /\b(curl|fetch|api|webhook|rpc|http|https)\b/i, false],
+    ["notify", /\b(notify|telegram|discord|slack|email|sendgrid)\b/i, false],
+    ["git_write", /\b(git push|create pr|open pr|pull request|gh pr|gh issue)\b/i, true],
+    ["publish", /\b(npm publish|gh release create|post to|tweet|publish to dev\.to|publish package)\b/i, true],
+    ["onchain_write", /\b(send transaction|onchain write|wallet|private key|sign|deploy contract)\b/i, true],
+  ];
+  for (const [name, re, irreversible] of patterns) {
+    if (re.test(text)) actions.push({ name, irreversible });
+  }
+  return actions;
+}
+
+function scoreRisk({ hosts, secrets, writes, actions, text }) {
+  let score = 0;
+  score += Math.min(hosts.length, 5);
+  score += secrets.length * 3;
+  score += writes.length;
+  score += actions.filter((action) => action.irreversible).length * 3;
+  if (/\b(private key|seed phrase|wallet|oauth|token|secret)\b/i.test(text)) score += 3;
+  if (score >= 8) return "high";
+  if (score >= 3) return "medium";
+  return "low";
+}
+
+function printPassport(item, opts = {}) {
+  console.log(`Skill: ${item.skill}`);
+  console.log(`Risk: ${item.risk}`);
+  console.log(`Secrets: ${item.secrets.length ? item.secrets.join(", ") : "none inferred"}`);
+  console.log(`Network: ${item.network.hosts.length ? item.network.hosts.join(", ") : "none inferred"}`);
+  console.log(`Writes: ${item.files.writes.length ? item.files.writes.join(", ") : "none inferred"}`);
+  console.log(`Actions: ${item.actions.length ? item.actions.join(", ") : "none inferred"}`);
+  console.log(`Irreversible: ${item.irreversible ? "yes" : "no"}`);
+  if (opts.detailed) {
+    console.log("");
+    console.log("Boundary:");
+    console.log("- denied secrets stay hidden unless explicitly allowed in charon.yml");
+    console.log("- red-line files such as .env and ~/.ssh/** are blocked");
+    console.log("- irreversible commands are blocked by default");
+    console.log("- non-allowlisted network calls are blocked at runtime");
+  }
 }
 
 function die(message) {

@@ -31,7 +31,11 @@ Lower-level commands:
 npx charon install
 charon status
 charon compile
+charon passport
+charon passport contract-audit
+charon receipts list
 charon receipts latest
+charon receipts inspect latest
 charon uninstall
 ```
 
@@ -47,6 +51,41 @@ charon uninstall
 - prompt redaction before Claude receives the prompt
 - sandbox backend detection with shim fallback
 - starter policy generation from installed Aeon skills
+- skill passports for blast-radius inspection
+- receipt summaries and JSON inspection
+
+**Passports**
+
+```bash
+charon passport
+charon passport contract-audit
+charon passport contract-audit --json
+```
+
+Passports summarize inferred risk before a skill runs:
+
+- secrets referenced by the skill
+- network hosts inferred from the skill
+- write surfaces such as articles, memory, issues, or social posts
+- irreversible action hints
+- a low/medium/high risk label
+
+**Receipts**
+
+```bash
+charon receipts list
+charon receipts latest
+charon receipts inspect latest
+```
+
+Receipts summarize what happened during guarded runs:
+
+- verdict
+- skill name
+- prompt redactions
+- allowed events
+- blocked events
+- raw JSON for deeper inspection
 
 **Aeon Auth**
 
