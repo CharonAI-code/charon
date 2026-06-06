@@ -15,6 +15,8 @@ const QUEUE_DIR = path.join(STATE_DIR, "queue");
 const PROPOSALS_DIR = path.join(STATE_DIR, "policy-proposals");
 const GENERATED_DIR = path.join(STATE_DIR, "generated");
 const KEY_FILE = path.join(STATE_DIR, "receipt.key");
+const IDENTITY_FILE = path.join(STATE_DIR, "identity.json");
+const IDENTITY_KEY_FILE = path.join(STATE_DIR, "identity.key");
 const SECRET_PATTERNS = [
   ["anthropic", /\bsk-ant-[A-Za-z0-9_-]{20,}/g],
   ["openai_project", /\bsk-proj-[A-Za-z0-9_-]{20,}/g],
@@ -54,6 +56,10 @@ async function main(argv) {
       return statusCommand(args);
     case "policy":
       return policyCommand(args);
+    case "keygen":
+      return keygenCommand(args);
+    case "identity":
+      return identityCommand(args);
     case "run":
       return runCommand(args);
     case "receipts":
@@ -92,9 +98,13 @@ Usage:
   charon policy synth
   charon policy review [id|latest]
   charon policy apply <id|latest> [--yes]
+  charon keygen
+  charon identity
   charon run -- <command>
   charon aeon init
   charon aeon enable
+  charon aeon status
+  charon aeon disable
   charon aeon run <skill> [-- <command>]
   charon receipts [list|latest|inspect <id|latest>]
   charon verify <receipt|latest>
@@ -157,6 +167,41 @@ function compileCommand(args) {
   console.log(`generated: ${path.resolve(out)}`);
 }
 
+function keygenCommand(args) {
+  const force = args.includes("--force");
+  ensureDir(STATE_DIR);
+  if ((fs.existsSync(IDENTITY_FILE) || fs.existsSync(IDENTITY_KEY_FILE)) && !force) {
+    console.log("Charon identity already exists.");
+    console.log("Use `charon keygen --force` to replace it.");
+    return;
+  }
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519", {
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  });
+  fs.writeFileSync(IDENTITY_KEY_FILE, privateKey, { mode: 0o600 });
+  const identity = {
+    schema: "charon.identity.v1",
+    type: "ed25519",
+    publicKey,
+    privateKeyPath: IDENTITY_KEY_FILE,
+    createdAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(IDENTITY_FILE, `${JSON.stringify(identity, null, 2)}\n`, { mode: 0o600 });
+  console.log(`Created identity ${path.resolve(IDENTITY_FILE)}`);
+}
+
+function identityCommand() {
+  const identity = loadIdentity();
+  if (!identity) {
+    console.log("No Charon identity. Run `charon keygen`.");
+    return;
+  }
+  console.log(`Type: ${identity.type}`);
+  console.log(`Public key: ${identity.publicKey.trim().replace(/\n/g, "\\n")}`);
+  console.log(`Key path: ${path.resolve(identity.privateKeyPath || IDENTITY_KEY_FILE)}`);
+}
+
 function runCommand(args, meta = {}) {
   return gateCommand(args, { ...meta, compatibilityCommand: "run" });
 }
@@ -217,26 +262,33 @@ function gateCommand(args, meta = {}) {
   const result = childProcess.spawnSync(launcher[0], launcher.slice(1), {
     cwd: process.cwd(),
     env: scrubEnv(process.env, policy),
-    stdio: "inherit",
+    encoding: "utf8",
+    stdio: ["inherit", "pipe", "pipe"],
   });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  const outputBoundary = scanOutputBoundary(result.stdout || "", result.stderr || "", policy);
   const exitCode = typeof result.status === "number" ? result.status : result.error ? 127 : 0;
+  const finalVerdict = outputBoundary.status === "denied" ? "DENY" : exitCode === 0 ? "PASS" : "ERROR";
+  const finalExitCode = outputBoundary.status === "denied" ? 126 : exitCode;
   const receipt = writeReceipt({
-    verdict: exitCode === 0 ? "PASS" : "ERROR",
-    reason: result.error ? result.error.message : "",
+    verdict: finalVerdict,
+    reason: outputBoundary.status === "denied" ? outputBoundary.reason : result.error ? result.error.message : "",
     command,
     policy,
     meta,
-    exitCode,
+    exitCode: finalExitCode,
     startedAt,
     backend: "openshell",
     generatedPolicy: policyPath,
-    trace: completeTrace(decision.trace, exitCode === 0 ? "launched" : "error", {
+    trace: addOutputTrace(completeTrace(decision.trace, exitCode === 0 ? "launched" : "error", {
       backend: "openshell",
-      exitCode,
-    }),
+      exitCode: finalExitCode,
+    }), outputBoundary),
+    output: outputBoundary.receiptOutput,
   });
   console.log(`Charon receipt: ${receipt.path}`);
-  process.exitCode = exitCode;
+  process.exitCode = finalExitCode;
 }
 
 function queueCommand(args) {
@@ -482,6 +534,7 @@ function verifyCommand(args) {
   delete body.signature;
   const expected = signObject(body);
   if (sig !== expected) throw new Error("receipt verification failed");
+  verifyReceiptIdentity(receipt);
   console.log(`OK ${path.resolve(file)}`);
 }
 
@@ -489,8 +542,10 @@ function aeonCommand(args) {
   const [sub, ...rest] = args;
   if (sub === "init") return aeonInit(rest);
   if (sub === "enable") return aeonEnable(rest);
+  if (sub === "status") return aeonStatus(rest);
+  if (sub === "disable") return aeonDisable(rest);
   if (sub === "run") return aeonRun(rest);
-  throw new Error("usage: charon aeon init | enable | run <skill> [-- <command>]");
+  throw new Error("usage: charon aeon init | enable | status | disable | run <skill> [-- <command>]");
 }
 
 function aeonInit(args) {
@@ -516,6 +571,27 @@ function aeonEnable(args) {
   console.log("Charon Gate enabled for Aeon.");
   console.log(`- hook: ${path.resolve(hook)}`);
   console.log("Use `charon aeon run <skill>` locally, or call the hook from Aeon automation.");
+}
+
+function aeonStatus() {
+  assertAeonRepo();
+  const hook = path.join(".charon", "aeon", "run-skill.js");
+  const checks = [
+    ["policy", fs.existsSync(CONFIG), path.resolve(CONFIG)],
+    ["hook", fs.existsSync(hook), path.resolve(hook)],
+    ["skills", fs.existsSync("skills"), path.resolve("skills")],
+  ];
+  for (const [name, ok, detail] of checks) {
+    console.log(`${ok ? "OK " : "NO "} ${name} - ${detail}`);
+  }
+  if (!checks.every(([, ok]) => ok)) process.exitCode = 1;
+}
+
+function aeonDisable() {
+  assertAeonRepo();
+  const hook = path.join(".charon", "aeon", "run-skill.js");
+  if (fs.existsSync(hook)) fs.rmSync(hook);
+  console.log("Charon Gate disabled for Aeon.");
 }
 
 function aeonRun(args) {
@@ -545,6 +621,10 @@ function defaultPolicy() {
       pause: ["git push", "gh release create", "deploy production", "terraform apply", "kubectl apply"],
       deny: ["git push --force", "npm publish", "rm -rf", "read:.env", "read:~/.ssh/**"],
       secretAction: "deny",
+      rules: [
+        { id: "release.npm_publish", verdict: "DENY", command: "npm", argsIncludes: ["publish"] },
+        { id: "release.git_push", verdict: "PAUSE", command: "git", argsIncludes: ["push"] },
+      ],
     },
     sandbox: {
       backend: "openshell",
@@ -562,6 +642,11 @@ function defaultPolicy() {
       env: {
         expose: [],
         deny: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"],
+      },
+      output: {
+        secretAction: "deny",
+        store: "redacted",
+        maxBytes: 4000,
       },
     },
   };
@@ -593,10 +678,20 @@ function validatePolicy(policy) {
   if (!["deny", "pause", "pass"].includes(policy.bounds.secretAction || "deny")) {
     throw new Error("bounds.secretAction must be deny, pause, or pass");
   }
+  if (!Array.isArray(policy.bounds.rules)) policy.bounds.rules = [];
   const sandbox = policy.sandbox;
   if (!sandbox || typeof sandbox !== "object") throw new Error(`${CONFIG} missing sandbox`);
   for (const key of ["files", "network", "commands", "env"]) {
     if (!sandbox[key] || typeof sandbox[key] !== "object") throw new Error(`${CONFIG} missing sandbox.${key}`);
+  }
+  if (!sandbox.output || typeof sandbox.output !== "object") {
+    sandbox.output = { secretAction: "deny", store: "redacted", maxBytes: 4000 };
+  }
+  if (!["deny", "pause", "pass"].includes(sandbox.output.secretAction || "deny")) {
+    throw new Error("sandbox.output.secretAction must be deny, pause, or pass");
+  }
+  if (!["none", "redacted"].includes(sandbox.output.store || "redacted")) {
+    throw new Error("sandbox.output.store must be none or redacted");
   }
   for (const [section, keys] of Object.entries({
     files: ["read", "write", "deny"],
@@ -700,6 +795,7 @@ function buildBoundaryTrace(command, policy) {
   const secretKinds = [...new Set(secrets.map((item) => item.kind))];
   const deniedFiles = detectDeniedFiles(rendered, policy);
   const network = detectNetworkHosts(rendered, policy);
+  const ruleMatch = matchStructuredRule(command, policy);
   const deniedAction = [...policy.bounds.deny, ...policy.sandbox.commands.deny]
     .find((item) => actionMatches(rendered, item));
   const pausedAction = policy.bounds.pause.find((item) => actionMatches(rendered, item));
@@ -717,7 +813,9 @@ function buildBoundaryTrace(command, policy) {
       ? { status: "denied", matches: deniedFiles }
       : { status: "clean", matches: [] },
     network,
-    action: deniedAction
+    action: ruleMatch
+      ? { status: normalizeVerdictStatus(ruleMatch.verdict), match: ruleMatch.id, rule: ruleMatch }
+      : deniedAction
       ? { status: "denied", match: deniedAction }
       : pausedAction
         ? { status: "paused", match: pausedAction }
@@ -727,6 +825,33 @@ function buildBoundaryTrace(command, policy) {
       backend: policy.sandbox.backend || "openshell",
     },
   };
+}
+
+function matchStructuredRule(command, policy) {
+  const rules = Array.isArray(policy.bounds.rules) ? policy.bounds.rules : [];
+  return rules.find((rule) => structuredRuleMatches(command, rule));
+}
+
+function structuredRuleMatches(command, rule) {
+  if (!rule || typeof rule !== "object") return false;
+  const first = command[0] || "";
+  if (rule.command && first !== rule.command) return false;
+  const rendered = command.join(" ");
+  if (rule.includes && !rendered.includes(rule.includes)) return false;
+  if (Array.isArray(rule.argsIncludes)) {
+    for (const part of rule.argsIncludes) {
+      if (!command.slice(1).some((arg) => String(arg).includes(part))) return false;
+    }
+  }
+  if (rule.toolName && !rendered.includes(rule.toolName)) return false;
+  return true;
+}
+
+function normalizeVerdictStatus(verdict) {
+  const value = String(verdict || "").toUpperCase();
+  if (value === "DENY") return "denied";
+  if (value === "PAUSE") return "paused";
+  return "passed";
 }
 
 function completeTrace(trace, sandboxStatus, extra = {}) {
@@ -809,6 +934,46 @@ function redactCommand(command) {
   };
 }
 
+function scanOutputBoundary(stdout, stderr, policy) {
+  const output = `${stdout || ""}${stderr || ""}`;
+  const redacted = redactText(output);
+  const maxBytes = Number(policy.sandbox.output.maxBytes || 4000);
+  const store = policy.sandbox.output.store || "redacted";
+  const action = policy.sandbox.output.secretAction || "deny";
+  const hasSecrets = redacted.redactions.length > 0;
+  const status = hasSecrets
+    ? action === "pause" ? "paused" : action === "pass" ? "passed" : "denied"
+    : "clean";
+  return {
+    status,
+    reason: hasSecrets ? `secret-like value in output: ${[...new Set(redacted.redactions.map((item) => item.kind))].join(", ")}` : "",
+    redactions: redacted.redactions,
+    receiptOutput: {
+      status,
+      stored: store,
+      stdout: store === "redacted" ? truncateOutput(redactText(stdout || "").value, maxBytes) : "",
+      stderr: store === "redacted" ? truncateOutput(redactText(stderr || "").value, maxBytes) : "",
+      redactions: redacted.redactions,
+    },
+  };
+}
+
+function addOutputTrace(trace, outputBoundary) {
+  return {
+    ...trace,
+    output: {
+      status: outputBoundary.status,
+      redactions: outputBoundary.redactions,
+    },
+  };
+}
+
+function truncateOutput(value, maxBytes) {
+  const text = String(value || "");
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  return `${text.slice(0, maxBytes)}\n[truncated]`;
+}
+
 function scrubEnv(env, policy) {
   const out = {};
   const expose = new Set(policy.sandbox.env.expose);
@@ -845,13 +1010,79 @@ function writeReceipt(input) {
     deniedEnv: input.policy.sandbox.env.deny,
     exitCode: input.exitCode,
     trace: input.trace || completeTrace(buildBoundaryTrace(input.command, input.policy), "unknown"),
+    output: input.output || { status: "not_captured" },
     meta: input.meta || {},
   };
+  attachIdentityProof(body);
   body.signature = signObject(body);
   const id = `${body.createdAt.replace(/[:.]/g, "-")}-${crypto.randomBytes(3).toString("hex")}`;
   const file = path.join(RECEIPTS_DIR, `${id}.json`);
   fs.writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`);
   return { id, path: path.resolve(file), receipt: body };
+}
+
+function attachIdentityProof(receipt) {
+  const identity = loadIdentity();
+  if (!identity) return;
+  if (receipt.trace) {
+    receipt.trace.identity = {
+      status: "signed",
+      runtime: receipt.meta && receipt.meta.runtime ? receipt.meta.runtime : "local",
+      publicKey: identity.publicKey,
+    };
+  }
+  const actionPayload = {
+    schema: "charon.action.v1",
+    command: receipt.command,
+    cwd: receipt.cwd,
+    policyHash: receipt.policyHash,
+    verdict: receipt.verdict,
+    trace: receipt.trace,
+    meta: receipt.meta,
+    createdAt: receipt.createdAt,
+  };
+  const signature = signIdentityPayload(actionPayload);
+  receipt.identity = {
+    schema: "charon.identityProof.v1",
+    type: identity.type,
+    publicKey: identity.publicKey,
+    actionHash: hashObject(actionPayload),
+    signature,
+  };
+}
+
+function loadIdentity() {
+  if (!fs.existsSync(IDENTITY_FILE) || !fs.existsSync(IDENTITY_KEY_FILE)) return null;
+  return readJson(IDENTITY_FILE);
+}
+
+function signIdentityPayload(payload) {
+  const privateKey = fs.readFileSync(IDENTITY_KEY_FILE, "utf8");
+  return crypto.sign(null, Buffer.from(stableJson(payload)), privateKey).toString("base64");
+}
+
+function verifyReceiptIdentity(receipt) {
+  if (!receipt.identity) return;
+  const actionPayload = {
+    schema: "charon.action.v1",
+    command: receipt.command,
+    cwd: receipt.cwd,
+    policyHash: receipt.policyHash,
+    verdict: receipt.verdict,
+    trace: receipt.trace,
+    meta: receipt.meta,
+    createdAt: receipt.createdAt,
+  };
+  if (hashObject(actionPayload) !== receipt.identity.actionHash) {
+    throw new Error("identity action hash verification failed");
+  }
+  const ok = crypto.verify(
+    null,
+    Buffer.from(stableJson(actionPayload)),
+    receipt.identity.publicKey,
+    Buffer.from(receipt.identity.signature, "base64"),
+  );
+  if (!ok) throw new Error("identity signature verification failed");
 }
 
 function enqueueAction(input) {
@@ -1087,12 +1318,13 @@ function printTrace(receipt, file) {
   console.log(`Trace: ${receiptId(file)}`);
   console.log(`Verdict: ${receipt.verdict}`);
   console.log(`Reason: ${receipt.reason || ""}`);
-  console.log(`Identity: ${trace.identity ? trace.identity.status : "unknown"}`);
+  console.log(`Identity: ${trace.identity ? formatTracePart(trace.identity) : "unknown"}`);
   console.log(`Secrets: ${trace.secrets ? formatTracePart(trace.secrets) : "unknown"}`);
   console.log(`Files: ${trace.files ? formatTracePart(trace.files) : "unknown"}`);
   console.log(`Network: ${trace.network ? formatTracePart(trace.network) : "unknown"}`);
   console.log(`Action: ${trace.action ? formatTracePart(trace.action) : "unknown"}`);
   console.log(`Sandbox: ${trace.sandbox ? formatTracePart(trace.sandbox) : "unknown"}`);
+  console.log(`Output: ${trace.output ? formatTracePart(trace.output) : "unknown"}`);
   console.log(`Receipt: ${path.resolve(file)}`);
 }
 
@@ -1104,6 +1336,8 @@ function formatTracePart(part) {
     part.denied && part.denied.length ? part.denied.join(",") : "",
     part.hosts && part.hosts.length && part.status !== "denied" ? part.hosts.join(",") : "",
     part.backend || "",
+    part.publicKey ? "pubkey" : "",
+    part.redactions && part.redactions.length ? `${part.redactions.length} redaction(s)` : "",
   ].filter(Boolean).join(" ");
   return details ? `${part.status} - ${details}` : part.status;
 }

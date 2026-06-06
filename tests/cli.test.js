@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const yaml = require("js-yaml");
 
 const ROOT = path.resolve(__dirname, "..");
 const CLI = path.join(ROOT, "bin", "charon.js");
@@ -62,12 +63,64 @@ test("run uses mocked OpenShell and writes verifiable receipt", () => {
   assert.equal(verify.status, 0, verify.stderr);
 });
 
+test("keygen signs receipts and verify checks identity proof", () => {
+  const cwd = tmpdir();
+  const mock = path.join(cwd, "openshell-mock.sh");
+  fs.writeFileSync(mock, "#!/bin/sh\nshift\nexec \"$@\"\n");
+  fs.chmodSync(mock, 0o755);
+  assert.equal(run(["init"], { cwd }).status, 0);
+  assert.equal(run(["keygen"], { cwd }).status, 0);
+
+  const result = run(["gate", "--", "node", "-e", "console.log('signed')"], {
+    cwd,
+    env: { CHARON_OPEN_SHELL_MOCK: mock },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const receipt = run(["receipts", "inspect", "latest"], { cwd });
+  assert.match(receipt.stdout, /"identity"/);
+  const verify = run(["verify", "latest"], { cwd });
+  assert.equal(verify.status, 0, verify.stderr);
+});
+
+test("output boundary denies and redacts secret output", () => {
+  const cwd = tmpdir();
+  const mock = path.join(cwd, "openshell-mock.sh");
+  fs.writeFileSync(mock, "#!/bin/sh\nshift\nexec \"$@\"\n");
+  fs.chmodSync(mock, 0o755);
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const token = "github_pat_123456789012345678901234567890abcdef";
+  const suffix = token.slice("github_pat_".length);
+  const result = run(["gate", "--", "node", "-e", `console.log('github_pat_' + '${suffix}')`], {
+    cwd,
+    env: { CHARON_OPEN_SHELL_MOCK: mock },
+  });
+  assert.equal(result.status, 126);
+  const receipt = run(["receipts", "inspect", "latest"], { cwd });
+  assert.doesNotMatch(receipt.stdout, new RegExp(token));
+  assert.match(receipt.stdout, /REDACTED:github/);
+  assert.match(receipt.stdout, /"output"/);
+});
+
 test("denied command is blocked before launch", () => {
   const cwd = tmpdir();
   assert.equal(run(["init"], { cwd }).status, 0);
   const result = run(["gate", "--", "sh", "-lc", "npm publish"], { cwd });
   assert.equal(result.status, 126);
   assert.match(result.stderr, /DENY/);
+});
+
+test("structured policy rules can deny commands", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const policy = yaml.load(fs.readFileSync(path.join(cwd, "charon.yml"), "utf8"));
+  policy.bounds.rules = [
+    { id: "custom.node_eval", verdict: "DENY", command: "node", argsIncludes: ["-e"] },
+  ];
+  fs.writeFileSync(path.join(cwd, "charon.yml"), yaml.dump(policy));
+  const result = run(["gate", "--", "node", "-e", "console.log(1)"], { cwd });
+  assert.equal(result.status, 126);
+  const trace = run(["trace", "latest"], { cwd });
+  assert.match(trace.stdout, /custom\.node_eval/);
 });
 
 test("secret-like action is denied and receipt is redacted", () => {
@@ -265,6 +318,14 @@ test("aeon enable writes local gate hook", () => {
   const result = run(["aeon", "enable"], { cwd });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(fs.existsSync(path.join(cwd, ".charon", "aeon", "run-skill.js")));
+
+  const status = run(["aeon", "status"], { cwd });
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /OK  hook/);
+
+  const disable = run(["aeon", "disable"], { cwd });
+  assert.equal(disable.status, 0, disable.stderr);
+  assert.equal(fs.existsSync(path.join(cwd, ".charon", "aeon", "run-skill.js")), false);
 });
 
 function hashLine(output) {
