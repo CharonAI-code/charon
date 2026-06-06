@@ -12,6 +12,7 @@ Recommended one-command setup inside an Aeon fork:
 
 ```bash
 npx charon setup --commit
+git push
 ```
 
 This installs Charon, generates a starter policy, verifies the integration,

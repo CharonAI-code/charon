@@ -118,40 +118,47 @@ red_lines:
 
 ## Quick Start
 
-Aeon:
-
-```bash
-cd charon/aeon
-npm install
-npm run smoke
-npm test
-```
-
-In an Aeon fork:
+### Aeon
 
 ```bash
 npx charon setup --commit
-npx charon passport
 ```
 
-After pulling Aeon upstream updates:
+Run this inside your Aeon fork. Charon installs itself, generates a starter
+policy, verifies the workflow patch, and commits the required files.
+
+Then push your Aeon fork:
 
 ```bash
+git push
+```
+
+Useful follow-ups:
+
+```bash
+npx charon passport
+npx charon receipts latest
 npx charon sync --commit
 ```
 
-After an Aeon run:
+Use `sync` after pulling upstream Aeon updates.
+
+### Hermes
 
 ```bash
-npx charon receipts list
-npx charon receipts latest
+git clone https://github.com/CharonAI-code/charon
+cd charon
+python3 charon/hermes/install.py
 ```
 
-Hermes:
+## Development
 
 ```bash
-python3 -m unittest discover -s charon/hermes/tests -p 'test_*.py'
-python3 charon/hermes/install.py
+cd charon/aeon
+npm run smoke
+npm test
+cd ../..
+python3 -m unittest discover -s hermes/tests -p 'test_*.py'
 ```
 
 ## Current Scope
