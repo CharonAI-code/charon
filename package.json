@@ -6,6 +6,12 @@
   "author": "CharonAI-code",
   "type": "commonjs",
   "main": "src/cli/index.js",
+  "exports": {
+    ".": "./src/cli/index.js",
+    "./adapters/aeon": "./src/adapters/aeon.js",
+    "./adapters/claude": "./src/adapters/claude.js",
+    "./adapters/codex": "./src/adapters/codex.js"
+  },
   "bin": {
     "charon": "bin/charon.js"
   },

@@ -315,6 +315,7 @@ function approveCommand(args) {
   const id = args[0];
   if (!id) throw new Error("usage: charon approve <id>");
   const item = loadQueuedAction(id);
+  verifyQueuedAction(item);
   if (item.status !== "paused") throw new Error(`queued action is not paused: ${id}`);
   if (item.cwd) process.chdir(item.cwd);
   item.status = "approved";
@@ -329,6 +330,7 @@ function rejectCommand(args) {
   const id = args[0];
   if (!id) throw new Error("usage: charon reject <id>");
   const item = loadQueuedAction(id);
+  verifyQueuedAction(item);
   if (item.cwd) process.chdir(item.cwd);
   item.status = "rejected";
   item.reviewedAt = new Date().toISOString();
@@ -567,18 +569,27 @@ function aeonEnable(args) {
   const hookDir = path.join(".charon", "aeon");
   ensureDir(hookDir);
   const hook = path.join(hookDir, "run-skill.js");
+  const runner = path.join("scripts", "charon-aeon-runner.js");
+  ensureDir(path.dirname(runner));
   fs.writeFileSync(hook, aeonHookSource(), { mode: 0o755 });
+  fs.writeFileSync(runner, aeonRunnerSource(), { mode: 0o755 });
+  writeAeonManifest({ hook, runner });
+  patchAeonPackageScript();
   console.log("Charon Gate enabled for Aeon.");
   console.log(`- hook: ${path.resolve(hook)}`);
-  console.log("Use `charon aeon run <skill>` locally, or call the hook from Aeon automation.");
+  console.log(`- runner: ${path.resolve(runner)}`);
 }
 
 function aeonStatus() {
   assertAeonRepo();
   const hook = path.join(".charon", "aeon", "run-skill.js");
+  const runner = path.join("scripts", "charon-aeon-runner.js");
+  const manifest = path.join(".charon", "aeon", "manifest.json");
   const checks = [
     ["policy", fs.existsSync(CONFIG), path.resolve(CONFIG)],
     ["hook", fs.existsSync(hook), path.resolve(hook)],
+    ["runner", fs.existsSync(runner), path.resolve(runner)],
+    ["manifest", fs.existsSync(manifest), path.resolve(manifest)],
     ["skills", fs.existsSync("skills"), path.resolve("skills")],
   ];
   for (const [name, ok, detail] of checks) {
@@ -590,7 +601,12 @@ function aeonStatus() {
 function aeonDisable() {
   assertAeonRepo();
   const hook = path.join(".charon", "aeon", "run-skill.js");
+  const runner = path.join("scripts", "charon-aeon-runner.js");
+  const manifest = path.join(".charon", "aeon", "manifest.json");
   if (fs.existsSync(hook)) fs.rmSync(hook);
+  if (fs.existsSync(runner)) fs.rmSync(runner);
+  if (fs.existsSync(manifest)) fs.rmSync(manifest);
+  unpatchAeonPackageScript();
   console.log("Charon Gate disabled for Aeon.");
 }
 
@@ -1103,6 +1119,7 @@ function enqueueAction(input) {
     policyHash: hashObject(compileOpenShell(input.policy, process.cwd()).config),
     meta: input.meta || {},
   };
+  item.signature = signQueueItem(item);
   const file = path.join(QUEUE_DIR, `${id}.json`);
   fs.writeFileSync(file, `${JSON.stringify(item, null, 2)}\n`);
   return { id, path: path.resolve(file), item };
@@ -1124,7 +1141,21 @@ function loadQueuedAction(id) {
 
 function saveQueuedAction(item) {
   ensureDir(QUEUE_DIR);
+  item.signature = signQueueItem({ ...item, signature: undefined });
   fs.writeFileSync(path.join(QUEUE_DIR, `${item.id}.json`), `${JSON.stringify(item, null, 2)}\n`);
+}
+
+function signQueueItem(item) {
+  const body = { ...item };
+  delete body.signature;
+  return signObject(body);
+}
+
+function verifyQueuedAction(item) {
+  const sig = item.signature;
+  if (!sig) throw new Error(`queued action is unsigned: ${item.id}`);
+  const expected = signQueueItem(item);
+  if (sig !== expected) throw new Error(`queued action verification failed: ${item.id}`);
 }
 
 function aeonHookSource() {
@@ -1182,14 +1213,28 @@ function inferPackageScriptChanges(policy) {
   }
   const scripts = pkg.scripts && typeof pkg.scripts === "object" ? pkg.scripts : {};
   for (const [name, command] of Object.entries(scripts)) {
-    if (["test", "lint", "typecheck", "build"].includes(name) && !policy.bounds.pass.includes(command)) {
-      changes.push(policyChange("loosen", "bounds.pass", "add", String(command), `allow package script: ${name}`));
+    if (["test", "lint", "typecheck", "build"].includes(name) && !hasStructuredRule(policy, `package.${name}`)) {
+      changes.push(policyChange("loosen", "bounds.rules", "add", packageScriptRule(`package.${name}`, "PASS", command), `allow package script: ${name}`));
     }
-    if (/publish|release|deploy/i.test(name) && !policy.bounds.pause.includes(command)) {
-      changes.push(policyChange("tighten", "bounds.pause", "add", String(command), `review package script: ${name}`));
+    if (/publish|release|deploy/i.test(name) && !hasStructuredRule(policy, `package.${name}`)) {
+      changes.push(policyChange("tighten", "bounds.rules", "add", packageScriptRule(`package.${name}`, "PAUSE", command), `review package script: ${name}`));
     }
   }
   return changes;
+}
+
+function packageScriptRule(id, verdict, command) {
+  const parts = String(command).trim().split(/\s+/).filter(Boolean);
+  return {
+    id,
+    verdict,
+    command: parts[0] || command,
+    argsIncludes: parts.slice(1, 3),
+  };
+}
+
+function hasStructuredRule(policy, id) {
+  return Array.isArray(policy.bounds.rules) && policy.bounds.rules.some((rule) => rule.id === id);
 }
 
 function inferAeonSkillChanges(policy) {
@@ -1245,7 +1290,7 @@ function policyChange(kind, target, op, value, reason) {
 function dedupeChanges(changes) {
   const seen = new Set();
   return changes.filter((change) => {
-    const key = `${change.kind}:${change.target}:${change.op}:${change.value}`;
+    const key = `${change.kind}:${change.target}:${change.op}:${stableJson(change.value)}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -1279,8 +1324,13 @@ function printPolicyProposal(proposal, file) {
   console.log(`Tighten: ${proposal.summary.tighten}`);
   console.log(`Loosen: ${proposal.summary.loosen}`);
   for (const change of proposal.changes) {
-    console.log(`${change.kind.toUpperCase()} ${change.target} += ${change.value} - ${change.reason}`);
+    console.log(`${change.kind.toUpperCase()} ${change.target} += ${formatPolicyValue(change.value)} - ${change.reason}`);
   }
+}
+
+function formatPolicyValue(value) {
+  if (value && typeof value === "object") return value.id || JSON.stringify(value);
+  return String(value);
 }
 
 function loadPolicyProposal(target) {
@@ -1443,6 +1493,45 @@ function pad(value, width) {
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function aeonRunnerSource() {
+  return `#!/usr/bin/env node
+"use strict";
+
+require("../.charon/aeon/run-skill");
+`;
+}
+
+function writeAeonManifest(paths) {
+  const manifest = {
+    schema: "charon.aeon.v1",
+    enabledAt: new Date().toISOString(),
+    hook: paths.hook,
+    runner: paths.runner,
+    command: "node scripts/charon-aeon-runner.js <skill> [-- <command>]",
+  };
+  ensureDir(path.join(".charon", "aeon"));
+  fs.writeFileSync(path.join(".charon", "aeon", "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+function patchAeonPackageScript() {
+  if (!fs.existsSync("package.json")) return;
+  const pkg = readJson("package.json");
+  pkg.scripts = pkg.scripts || {};
+  if (!pkg.scripts["charon:aeon"]) {
+    pkg.scripts["charon:aeon"] = "node scripts/charon-aeon-runner.js";
+  }
+  fs.writeFileSync("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
+}
+
+function unpatchAeonPackageScript() {
+  if (!fs.existsSync("package.json")) return;
+  const pkg = readJson("package.json");
+  if (pkg.scripts && pkg.scripts["charon:aeon"] === "node scripts/charon-aeon-runner.js") {
+    delete pkg.scripts["charon:aeon"];
+    fs.writeFileSync("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
+  }
 }
 
 module.exports = {

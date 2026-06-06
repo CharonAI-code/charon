@@ -11,6 +11,7 @@ const yaml = require("js-yaml");
 const ROOT = path.resolve(__dirname, "..");
 const CLI = path.join(ROOT, "bin", "charon.js");
 const { createCharon } = require("..");
+const { createAeonAdapter } = require("charon/adapters/aeon");
 
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "charon-test-"));
@@ -178,8 +179,8 @@ test("policy synth proposes changes from package scripts", () => {
   const synth = run(["policy", "synth"], { cwd });
   assert.equal(synth.status, 0, synth.stderr);
   assert.match(synth.stdout, /Proposal: cp-/);
-  assert.match(synth.stdout, /LOOSEN bounds.pass \+= eslint \./);
-  assert.match(synth.stdout, /TIGHTEN bounds.pause \+= npm publish/);
+  assert.match(synth.stdout, /LOOSEN bounds.rules \+= package.lint/);
+  assert.match(synth.stdout, /TIGHTEN bounds.rules \+= package.release/);
 
   const apply = run(["policy", "apply", "latest"], { cwd });
   assert.notEqual(apply.status, 0);
@@ -188,7 +189,7 @@ test("policy synth proposes changes from package scripts", () => {
   const applyYes = run(["policy", "apply", "latest", "--yes"], { cwd });
   assert.equal(applyYes.status, 0, applyYes.stderr);
   const policy = fs.readFileSync(path.join(cwd, "charon.yml"), "utf8");
-  assert.match(policy, /eslint \./);
+  assert.match(policy, /package.lint/);
 });
 
 test("policy synth proposes Aeon skill write profile", () => {
@@ -254,6 +255,18 @@ test("SDK redacts secret-bearing tool calls", () => {
   assert.match(receipt, /REDACTED:github/);
 });
 
+test("runtime adapter gates Aeon tool calls", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const adapter = createAeonAdapter({ cwd });
+  const decision = adapter.beforeToolCall({
+    skill: "demo",
+    toolName: "shell",
+    args: ["sh", "-lc", "npm publish"],
+  });
+  assert.equal(decision.verdict, "DENY");
+});
+
 test("paused command enters local queue and can be rejected", () => {
   const cwd = tmpdir();
   assert.equal(run(["init"], { cwd }).status, 0);
@@ -266,7 +279,18 @@ test("paused command enters local queue and can be rejected", () => {
   assert.match(queue.stdout, /requires release review/);
   const id = queue.stdout.trim().split(/\s+/)[0];
 
-  const reject = run(["reject", id], { cwd });
+  const queuedPath = path.join(cwd, ".charon", "queue", `${id}.json`);
+  const queued = JSON.parse(fs.readFileSync(queuedPath, "utf8"));
+  queued.reason = "tampered";
+  fs.writeFileSync(queuedPath, JSON.stringify(queued, null, 2));
+  const tampered = run(["approve", id], { cwd, env: { CHARON_OPEN_SHELL_MOCK: "/bin/echo" } });
+  assert.notEqual(tampered.status, 0);
+  assert.match(tampered.stderr, /verification failed/);
+
+  assert.equal(run(["gate", "--", "sh", "-lc", "git push"], { cwd }).status, 125);
+  const id2 = run(["queue"], { cwd }).stdout.trim().split(/\s+/)[0];
+
+  const reject = run(["reject", id2], { cwd });
   assert.equal(reject.status, 0, reject.stderr);
   assert.match(reject.stdout, /Rejected/);
 });
@@ -314,10 +338,14 @@ test("aeon enable writes local gate hook", () => {
   fs.mkdirSync(path.join(cwd, "skills", "demo"), { recursive: true });
   fs.writeFileSync(path.join(cwd, "aeon.yml"), "demo: { enabled: true }\n");
   fs.writeFileSync(path.join(cwd, "skills", "demo", "SKILL.md"), "# Demo\n");
+  fs.writeFileSync(path.join(cwd, "package.json"), JSON.stringify({ scripts: {} }));
 
   const result = run(["aeon", "enable"], { cwd });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(fs.existsSync(path.join(cwd, ".charon", "aeon", "run-skill.js")));
+  assert.ok(fs.existsSync(path.join(cwd, "scripts", "charon-aeon-runner.js")));
+  assert.ok(fs.existsSync(path.join(cwd, ".charon", "aeon", "manifest.json")));
+  assert.match(fs.readFileSync(path.join(cwd, "package.json"), "utf8"), /charon:aeon/);
 
   const status = run(["aeon", "status"], { cwd });
   assert.equal(status.status, 0, status.stderr);
@@ -326,6 +354,7 @@ test("aeon enable writes local gate hook", () => {
   const disable = run(["aeon", "disable"], { cwd });
   assert.equal(disable.status, 0, disable.stderr);
   assert.equal(fs.existsSync(path.join(cwd, ".charon", "aeon", "run-skill.js")), false);
+  assert.equal(fs.existsSync(path.join(cwd, "scripts", "charon-aeon-runner.js")), false);
 });
 
 function hashLine(output) {
