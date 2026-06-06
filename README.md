@@ -136,23 +136,11 @@ cd charon
 python3 charon/hermes/install.py
 ```
 
-## Development
+That is enough to start. After install, keep using Aeon or Hermes normally;
+Charon runs in the background and leaves receipts when it blocks or redacts
+something.
 
-```bash
-cd charon/aeon
-npm run smoke
-npm test
-cd ../..
-python3 -m unittest discover -s hermes/tests -p 'test_*.py'
-```
-
-## Useful Commands
-
-```bash
-npx charon passport
-npx charon receipts latest
-npx charon sync --push
-```
+More adapter-specific commands live in [Aeon](./aeon) and [Hermes](./hermes).
 
 ## Current Scope
 
