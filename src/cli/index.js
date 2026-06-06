@@ -317,6 +317,78 @@ function traceCommand(args) {
   printTrace(readJson(file), file);
 }
 
+function createCharon(options = {}) {
+  const cwd = options.cwd || process.cwd();
+  return {
+    gateToolCall(input) {
+      const previous = process.cwd();
+      process.chdir(cwd);
+      try {
+        const policy = fs.existsSync(CONFIG) ? loadPolicy() : defaultPolicy();
+        const command = toolCallToCommand(input);
+        const meta = {
+          runtime: input.runtime || "sdk",
+          skill: input.skill || "",
+          toolName: input.toolName || "unknown",
+          context: input.context || "",
+        };
+        const decision = decideAction(command, policy);
+        const exitCode = decision.verdict === "PASS" ? 0 : decision.verdict === "PAUSE" ? 125 : 126;
+        let queueId = "";
+        if (decision.verdict === "PAUSE") {
+          const queued = enqueueAction({ command, policy, reason: decision.reason, meta });
+          queueId = queued.id;
+        }
+        const receipt = writeReceipt({
+          verdict: decision.verdict,
+          reason: decision.reason,
+          command,
+          policy,
+          meta: queueId ? { ...meta, queueId } : meta,
+          trace: completeTrace(decision.trace, decision.verdict === "PASS" ? "not_launched" : "not_launched"),
+          exitCode,
+        });
+        return {
+          pass: decision.verdict === "PASS",
+          pause: decision.verdict === "PAUSE",
+          deny: decision.verdict === "DENY",
+          verdict: decision.verdict,
+          reason: decision.reason,
+          trace: receipt.receipt.trace,
+          receipt: receipt.path,
+          queueId,
+        };
+      } finally {
+        process.chdir(previous);
+      }
+    },
+  };
+}
+
+function toolCallToCommand(input) {
+  const toolName = input.toolName || "tool";
+  const args = input.args !== undefined ? input.args : input.toolArgs;
+  if (toolName === "shell" || toolName === "command") {
+    if (Array.isArray(args)) return args.map(String);
+    if (typeof args === "string") return ["sh", "-lc", args];
+  }
+  return [
+    String(toolName),
+    stringifyToolArgs(args),
+    input.context ? String(input.context) : "",
+  ].filter(Boolean);
+}
+
+function stringifyToolArgs(args) {
+  if (args === undefined || args === null) return "";
+  if (typeof args === "string") return args;
+  try {
+    return JSON.stringify(args);
+  } catch {
+    return String(args);
+  }
+}
+
 function policyCommand(args) {
   const [sub, ...rest] = args;
   if (sub === "synth") return policySynthCommand(rest);
@@ -1141,7 +1213,9 @@ function shellQuote(value) {
 
 module.exports = {
   main,
+  createCharon,
   defaultPolicy,
+  decideAction,
   validatePolicy,
   compileOpenShell,
   scrubEnv,

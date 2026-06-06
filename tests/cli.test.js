@@ -9,6 +9,7 @@ const test = require("node:test");
 
 const ROOT = path.resolve(__dirname, "..");
 const CLI = path.join(ROOT, "bin", "charon.js");
+const { createCharon } = require("..");
 
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "charon-test-"));
@@ -147,6 +148,57 @@ test("policy synth proposes Aeon skill write profile", () => {
   const synth = run(["policy", "synth"], { cwd });
   assert.equal(synth.status, 0, synth.stderr);
   assert.match(synth.stdout, /reports\/audit\/\*\*/);
+});
+
+test("SDK gates structured shell tool calls", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const charon = createCharon({ cwd });
+  const decision = charon.gateToolCall({
+    runtime: "test",
+    toolName: "shell",
+    args: ["sh", "-lc", "npm publish"],
+    context: "release attempt",
+  });
+
+  assert.equal(decision.verdict, "DENY");
+  assert.equal(decision.pass, false);
+  assert.match(decision.reason, /outside bounds/);
+  assert.ok(fs.existsSync(decision.receipt));
+});
+
+test("SDK queues paused structured tool calls", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const charon = createCharon({ cwd });
+  const decision = charon.gateToolCall({
+    runtime: "aeon",
+    skill: "ship",
+    toolName: "shell",
+    args: ["sh", "-lc", "git push"],
+  });
+
+  assert.equal(decision.verdict, "PAUSE");
+  assert.equal(decision.pause, true);
+  assert.match(decision.queueId, /^cq-/);
+  assert.ok(fs.existsSync(path.join(cwd, ".charon", "queue", `${decision.queueId}.json`)));
+});
+
+test("SDK redacts secret-bearing tool calls", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const token = "github_pat_123456789012345678901234567890abcdef";
+  const charon = createCharon({ cwd });
+  const decision = charon.gateToolCall({
+    runtime: "custom",
+    toolName: "http.request",
+    toolArgs: { url: "https://api.github.com", token },
+  });
+
+  assert.equal(decision.verdict, "DENY");
+  const receipt = fs.readFileSync(decision.receipt, "utf8");
+  assert.doesNotMatch(receipt, new RegExp(token));
+  assert.match(receipt, /REDACTED:github/);
 });
 
 test("paused command enters local queue and can be rejected", () => {

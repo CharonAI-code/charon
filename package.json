@@ -5,6 +5,7 @@
   "license": "MIT",
   "author": "CharonAI-code",
   "type": "commonjs",
+  "main": "src/cli/index.js",
   "bin": {
     "charon": "bin/charon.js"
   },
