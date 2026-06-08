@@ -1,0 +1,37 @@
+%%{init: {"theme": "base", "themeVariables": {"background": "#ffffff", "primaryColor": "#ffffff", "primaryBorderColor": "#111111", "primaryTextColor": "#111111", "clusterBkg": "#ffffff", "clusterBorder": "#777777", "lineColor": "#111111", "edgeLabelBackground": "#ffffff", "tertiaryColor": "#ffffff", "fontFamily": "Arial"}}}%%
+flowchart LR
+  subgraph U["UNTRUSTED INPUTS"]
+    direction TB
+    W["web pages"]
+    D["docs / issues / chats"]
+    T["tool descriptions"]
+    F["retrieved files"]
+  end
+
+  M["<b>agent model</b><br/>plans from mixed context"]
+  A["<b>attempted action</b><br/>command / file / env / network / tool"]
+  C["<b>Charon boundary</b><br/>policy before side effect"]
+
+  subgraph S["SIDE-EFFECT SURFACES"]
+    direction TB
+    OS["OS commands"]
+    FS["files"]
+    ENV["secrets / env"]
+    NET["network"]
+    API["external tools / APIs"]
+  end
+
+  U -->|"context can influence"| M
+  M -->|"requests"| A
+  A -->|"must cross"| C
+  C -->|"PASS only"| S
+
+  A -.->|"PAUSE / DENY<br/>no launch"| R["signed receipt"]
+
+  classDef plain fill:#fff,stroke:#111,color:#111,stroke-width:1.7px;
+  classDef group fill:#fff,stroke:#777,color:#111,stroke-width:1.4px,stroke-dasharray:7 6;
+  classDef boundary fill:#f7f7f7,stroke:#111,color:#111,stroke-width:2px;
+  classDef receipt fill:#fff,stroke:#555,color:#111,stroke-dasharray:7 6;
+  class W,D,T,F,M,A,OS,FS,ENV,NET,API plain;
+  class C boundary;
+  class R receipt;

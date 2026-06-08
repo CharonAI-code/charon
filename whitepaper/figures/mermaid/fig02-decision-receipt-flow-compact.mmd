@@ -1,0 +1,35 @@
+%%{init: {"theme": "base", "themeVariables": {"background": "#ffffff", "primaryColor": "#ffffff", "primaryBorderColor": "#111111", "primaryTextColor": "#111111", "clusterBkg": "#ffffff", "clusterBorder": "#777777", "lineColor": "#111111", "edgeLabelBackground": "#ffffff", "tertiaryColor": "#ffffff", "fontFamily": "Arial"}}}%%
+flowchart TB
+  A["<b>attempted action</b><br/><code>cat .env</code>"]
+  N["normalize request"]
+  C["check policy surfaces<br/>command / file / env / network"]
+  V{"verdict"}
+
+  A -->|"request, not execution"| N
+  N --> C
+  C --> V
+
+  subgraph O["OUTCOMES"]
+    direction LR
+    P["<b>PASS</b><br/>execute"]
+    Q["<b>PAUSE</b><br/>queue"]
+    D["<b>DENY</b><br/>block"]
+  end
+
+  V -->|"inside bounds"| P
+  V -->|"reviewable"| Q
+  V -->|"violation"| D
+
+  M["machine side effect"]
+  R["<b>signed receipt</b><br/>action + verdict + reason<br/>policy hash + identity proof"]
+
+  P --> M
+  P --> R
+  Q --> R
+  D --> R
+
+  classDef plain fill:#fff,stroke:#111,color:#111,stroke-width:1.7px;
+  classDef receipt fill:#fff,stroke:#555,color:#111,stroke-width:1.5px,stroke-dasharray:7 6;
+  classDef group fill:#fff,stroke:#777,color:#111,stroke-width:1.4px,stroke-dasharray:7 6;
+  class A,N,C,V,P,Q,D,M plain;
+  class R receipt;

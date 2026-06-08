@@ -1,0 +1,35 @@
+flowchart LR
+  subgraph IN["attempted action"]
+    A["agent output"]
+    B["<code>cat .env</code>"]
+    A --> B
+  end
+
+  subgraph C["Charon pre-execution boundary"]
+    P["policy<br/><code>charon.yml</code>"]
+    H["policy hash"]
+    I["identity"]
+    V{"PASS<br/>PAUSE<br/>DENY"}
+    P --> V
+    H --> V
+    I --> V
+  end
+
+  X["execute"]
+  Q["queue"]
+  Z["block"]
+  M["machine boundary"]
+  R["signed receipt"]
+
+  B -->|"requested action"| V
+  V -->|"PASS"| X --> M
+  V -->|"PAUSE"| Q --> R
+  V -->|"DENY"| Z --> R
+  X --> R
+
+  classDef plain fill:#fff,stroke:#111,color:#111,stroke-width:1.5px;
+  classDef group fill:#fff,stroke:#777,color:#111,stroke-dasharray:6 5;
+  classDef receipt fill:#fff,stroke:#555,color:#111,stroke-dasharray:6 5;
+  class A,B,P,H,I,V,X,Q,Z,M plain;
+  class R receipt;
+

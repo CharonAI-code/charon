@@ -1,31 +1,32 @@
 # Charon
 
-Charon is a local action gate and sandbox runtime for autonomous agents.
+Charon is a local policy gate and receipt layer for autonomous agents.
 
 It lets agents work inside defined bounds. Every action gets a simple decision:
 
 ```txt
-PASS  -> run inside the sandbox
+PASS  -> run after policy check
 PAUSE -> wait for release review
 DENY  -> refuse before execution
 ```
 
-Charon v1 is macOS-first, Aeon-first, and backed by OpenShell for real runtime
-isolation.
+Charon v1 is local-first and Aeon-first. It sits before risky agent actions,
+applies a programmable policy, scrubs blocked environment variables, writes
+verifiable receipts, and keeps paused actions in a local queue.
 
 ## Why Charon Exists
 
 Agent instructions are soft. Runtime bounds are harder.
 
 Charon sits before an agent action, evaluates it against `charon.yml`, and only
-runs passing actions through an OpenShell sandbox.
+lets passing actions execute.
 
 ```mermaid
 flowchart LR
   A["Aeon skill / agent command"] --> B["Charon Gate"]
   B --> C["charon.yml bounds"]
   C --> D{"PASS / PAUSE / DENY"}
-  D -->|PASS| E["OpenShell sandbox"]
+  D -->|PASS| E["Local command"]
   D -->|PAUSE| F["Local queue"]
   D -->|DENY| G["Receipt"]
   E --> H["Agent run"]
@@ -33,13 +34,6 @@ flowchart LR
 ```
 
 ## Install
-
-Install OpenShell:
-
-```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
-brew install e2fsprogs
-```
 
 Install Charon from this repo:
 
@@ -88,7 +82,7 @@ charon aeon run <skill>
 For local testing without Claude:
 
 ```bash
-charon aeon run <skill> -- echo "sandbox works"
+charon aeon run <skill> -- echo "charon works"
 ```
 
 Charon tags receipts with the Aeon skill name, policy hash, backend, command,
@@ -119,7 +113,7 @@ bounds:
     - read:.env
     - read:~/.ssh/**
 sandbox:
-  backend: openshell
+  backend: local
   files:
     read:
       - .
@@ -197,7 +191,6 @@ Charon v1 is intentionally narrow:
 - macOS only
 - Aeon first
 - local action gate
-- OpenShell backend
 - local queue and receipts
 - no hosted service
 - no token

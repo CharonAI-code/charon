@@ -1,0 +1,189 @@
+digraph CharonActionBoundary {
+  graph [
+    rankdir=LR,
+    bgcolor="white",
+    pad="0.28",
+    nodesep="0.52",
+    ranksep="0.76",
+    splines=ortho,
+    outputorder=edgesfirst,
+    fontname="Helvetica",
+    label=<
+      <B>Figure 1. Charon action boundary</B><BR/>
+      <FONT POINT-SIZE="15">A requested action is evaluated before it reaches the machine boundary.</FONT>
+    >,
+    labelloc=t,
+    labeljust=c,
+    fontsize=24
+  ];
+
+  node [
+    shape=rect,
+    style="rounded",
+    color="#111111",
+    penwidth=1.4,
+    fontname="Helvetica",
+    fontsize=16,
+    margin="0.16,0.11",
+    height=0.72
+  ];
+
+  edge [
+    color="#222222",
+    penwidth=1.4,
+    arrowsize=0.82,
+    fontname="Helvetica",
+    fontsize=12
+  ];
+
+  subgraph cluster_agent {
+    label="AGENT RUNTIME";
+    color="#777777";
+    penwidth=1.2;
+    style="dashed,rounded";
+    fontsize=13;
+    fontname="Helvetica-Bold";
+    margin=18;
+
+    model [
+      label=<
+        <B>Model output</B><BR/>
+        <FONT POINT-SIZE="13">intent as text</FONT>
+      >
+    ];
+
+    request [
+      label=<
+        <FONT FACE="Menlo"><B>cat .env</B></FONT><BR/>
+        <FONT POINT-SIZE="13">requested action</FONT>
+      >
+    ];
+
+    model -> request [
+      label="tool call formed",
+      color="#666666",
+      fontcolor="#666666",
+      arrowsize=0.65
+    ];
+  }
+
+  subgraph cluster_gate {
+    label="CHARON GATE";
+    color="#111111";
+    penwidth=1.5;
+    style="rounded";
+    fontsize=13;
+    fontname="Helvetica-Bold";
+    margin=18;
+
+    policy [
+      label=<
+        <FONT FACE="Menlo"><B>charon.yml</B></FONT><BR/>
+        <FONT POINT-SIZE="12">policy rules</FONT>
+      >
+    ];
+
+    hash [
+      label=<
+        <FONT FACE="Menlo"><B>policy hash</B></FONT><BR/>
+        <FONT POINT-SIZE="12">deterministic binding</FONT>
+      >
+    ];
+
+    identity [
+      label=<
+        <FONT FACE="Menlo"><B>identity</B></FONT><BR/>
+        <FONT POINT-SIZE="12">local signer</FONT>
+      >
+    ];
+
+    policy -> hash [style=invis, weight=10];
+    hash -> identity [style=invis, weight=10];
+  }
+
+  decision [
+    shape=diamond,
+    width=1.35,
+    height=1.0,
+    label=<
+      <B>verdict</B>
+    >,
+    margin="0.08,0.04"
+  ];
+
+  pass [
+    label=<
+      <B>PASS</B><BR/>
+      <FONT POINT-SIZE="13">execute</FONT>
+    >
+  ];
+
+  pause [
+    label=<
+      <B>PAUSE</B><BR/>
+      <FONT POINT-SIZE="13">queue review</FONT>
+    >
+  ];
+
+  deny [
+    label=<
+      <B>DENY</B><BR/>
+      <FONT POINT-SIZE="13">block before launch</FONT>
+    >
+  ];
+
+  machine [
+    label=<
+      <B>MACHINE BOUNDARY</B><BR/>
+      <FONT POINT-SIZE="13">OS / tool / file / network / secret</FONT>
+    >,
+    penwidth=1.8
+  ];
+
+  receipt [
+    label=<
+      <B>signed receipt</B><BR/>
+      <FONT POINT-SIZE="13">action + verdict + policy hash + identity proof</FONT>
+    >,
+    style="rounded,dashed",
+    color="#555555"
+  ];
+
+  request -> decision [
+    label="requested action only",
+    fontcolor="#555555"
+  ];
+
+  policy -> decision [
+    label="evaluate",
+    fontcolor="#555555"
+  ];
+
+  decision -> pass [label="inside policy"];
+  decision -> pause [label="reviewable risk"];
+  decision -> deny [label="policy violation"];
+
+  pass -> machine [
+    label="launch",
+    fontname="Helvetica-Bold"
+  ];
+
+  pause -> receipt [
+    label="no launch",
+    color="#555555",
+    fontcolor="#555555"
+  ];
+
+  deny -> receipt [
+    label="no launch",
+    color="#555555",
+    fontcolor="#555555"
+  ];
+
+  pass -> receipt [
+    label="record result",
+    color="#555555",
+    fontcolor="#555555"
+  ];
+}
+

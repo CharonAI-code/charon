@@ -1,0 +1,45 @@
+%%{init: {"theme": "base", "themeVariables": {"background": "#ffffff", "primaryColor": "#ffffff", "primaryBorderColor": "#111111", "primaryTextColor": "#111111", "clusterBkg": "#ffffff", "clusterBorder": "#777777", "lineColor": "#111111", "edgeLabelBackground": "#ffffff", "tertiaryColor": "#ffffff", "fontFamily": "Arial"}}}%%
+flowchart LR
+  A["<b>attempted action</b><br/><code>cat .env</code>"]
+
+  subgraph E["POLICY EVALUATION"]
+    direction TB
+    N["normalize request"]
+    C["check surfaces<br/>command / file / env / network / output"]
+    V{"verdict"}
+    N --> C --> V
+  end
+
+  P["<b>PASS</b><br/>execute action"]
+  Q["<b>PAUSE</b><br/>write queue item"]
+  D["<b>DENY</b><br/>do not launch"]
+
+  X["machine side effect"]
+  U["user approval<br/>or rejection"]
+
+  subgraph R["SIGNED RECEIPT"]
+    direction LR
+    B["receipt body<br/>action + verdict + reason + trace"]
+    H["policy hash"]
+    I["identity proof"]
+    S["receipt signature"]
+    B --- H --- I --- S
+  end
+
+  A -->|"request only"| N
+  V -->|"inside bounds"| P
+  V -->|"reviewable risk"| Q
+  V -->|"policy violation"| D
+
+  P --> X
+  Q --> U
+
+  P -->|"record result"| B
+  Q -->|"record pause"| B
+  D -->|"record block"| B
+  U -->|"record decision"| B
+
+  classDef plain fill:#fff,stroke:#111,color:#111,stroke-width:1.7px;
+  classDef group fill:#fff,stroke:#777,color:#111,stroke-width:1.5px,stroke-dasharray:7 6;
+  classDef receipt fill:#fff,stroke:#111,color:#111,stroke-width:1.7px;
+  class A,N,C,V,P,Q,D,X,U,B,H,I,S plain;

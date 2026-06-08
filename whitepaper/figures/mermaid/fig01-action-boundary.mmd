@@ -1,0 +1,37 @@
+flowchart LR
+  subgraph A["AGENT RUNTIME"]
+    M["<b>Model output</b><br/>intent as text"]
+    R["<code>cat .env</code><br/>requested action"]
+    M -->|"tool call formed"| R
+  end
+
+  subgraph G["CHARON GATE"]
+    P["<code>charon.yml</code><br/>policy rules"]
+    H["<code>policy hash</code><br/>deterministic binding"]
+    I["<code>identity</code><br/>local signer"]
+    P --> H --> I
+  end
+
+  V{"verdict"}
+  PASS["<b>PASS</b><br/>execute"]
+  PAUSE["<b>PAUSE</b><br/>queue review"]
+  DENY["<b>DENY</b><br/>block before launch"]
+  MACH["<b>MACHINE BOUNDARY</b><br/>OS / tool / file / network / secret"]
+  REC["<b>signed receipt</b><br/>action + verdict + policy hash + identity proof"]
+
+  R -->|"requested action only"| V
+  P -->|"evaluate"| V
+  V -->|"inside policy"| PASS
+  V -->|"reviewable risk"| PAUSE
+  V -->|"policy violation"| DENY
+  PASS -->|"launch"| MACH
+  PASS -->|"record result"| REC
+  PAUSE -->|"no launch"| REC
+  DENY -->|"no launch"| REC
+
+  classDef plain fill:#fff,stroke:#111,color:#111,stroke-width:1.5px;
+  classDef dashed fill:#fff,stroke:#666,color:#111,stroke-dasharray:6 6;
+  classDef receipt fill:#fff,stroke:#555,color:#111,stroke-dasharray:6 6;
+  class A,G dashed;
+  class M,R,P,H,I,V,PASS,PAUSE,DENY,MACH plain;
+  class REC receipt;

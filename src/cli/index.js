@@ -6,6 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const yaml = require("js-yaml");
+const normalizationCore = require("../core/normalization");
 
 const VERSION = "0.2.0";
 const CONFIG = "charon.yml";
@@ -40,8 +41,12 @@ async function main(argv) {
   switch (cmd) {
     case "init":
       return init(args);
+    case "setup":
+      return setupCommand(args);
     case "doctor":
       return doctor(args);
+    case "selftest":
+      return selftestCommand(args);
     case "compile":
       return compileCommand(args);
     case "gate":
@@ -88,13 +93,23 @@ async function main(argv) {
 function help() {
   console.log(`charon ${VERSION}
 
+Install:
+  npx github:CharonAI-code/charon setup
+  charon status
+
+Aeon:
+  npx github:CharonAI-code/charon init
+  charon status
+
 Usage:
   charon init
+  charon setup
   charon doctor
+  charon selftest
   charon compile
   charon gate -- <command>
   charon queue
-  charon approve <id>
+  charon approve <id> [--yes]
   charon reject <id>
   charon history [list|latest|inspect <id|latest>]
   charon trace <id|latest>
@@ -110,15 +125,18 @@ Usage:
   charon aeon status
   charon aeon disable
   charon aeon run <skill> [-- <command>]
+  charon aeon passport [skill] [--json]
   charon receipts [list|latest|inspect <id|latest>]
   charon verify <receipt|latest>
 
-macOS-only. Local action gates and OpenShell-backed sandboxing for autonomous agents.
+Local policy gate and receipts for autonomous agents.
 `);
 }
 
 function init(args) {
-  assertMac();
+  if (isAeonRepo() && !args.includes("--policy-only")) {
+    return setupCommand(args);
+  }
   const force = args.includes("--force");
   if (fs.existsSync(CONFIG) && !force) {
     console.log(`${CONFIG} already exists.`);
@@ -131,18 +149,31 @@ function init(args) {
   console.log(`Created ${path.resolve(CONFIG)}`);
 }
 
-function doctor() {
-  assertMac();
-  const checks = [
-    ["macOS", process.platform === "darwin", `${os.type()} ${os.release()}`, true],
-    ["OpenShell CLI", hasCommand("openshell"), commandPath("openshell") || "not found", true],
-    ["e2fsprogs mkfs.ext4", hasMkfsExt4(), mkfsExt4Path() || "not found", true],
-    ["Docker or Colima", hasCommand("docker"), commandPath("docker") || "not found", false],
-    ["charon.yml", fs.existsSync(CONFIG), path.resolve(CONFIG), true],
-  ];
+function setupCommand(args) {
+  if (isAeonRepo()) return aeonSetup(args);
+  const globalInstall = ensureGlobalCommand(args);
+  init(["--policy-only", ...args]);
+  ensureIdentity();
+  printSetupSummary({
+    title: "Charon is ready.",
+    mode: "local",
+    steps: [
+      ["policy", path.resolve(CONFIG)],
+      ["identity", path.resolve(IDENTITY_FILE)],
+      ["command", globalInstall],
+      ["next", "run `charon gate -- <command>`"],
+    ],
+  });
+}
 
-  const openshell = openshellStatus();
-  checks.push(["OpenShell gateway", openshell.ok, openshell.detail, true]);
+function doctor(args = []) {
+  void args;
+  const checks = [
+    ["Node.js", true, process.version, true],
+    ["platform", true, `${os.type()} ${os.release()}`, true],
+    ["charon.yml", fs.existsSync(CONFIG), path.resolve(CONFIG), true],
+    ["identity", fs.existsSync(IDENTITY_FILE), path.resolve(IDENTITY_FILE), false],
+  ];
 
   for (const [name, ok, detail, required] of checks) {
     const label = ok ? "OK " : required ? "NO " : "WARN";
@@ -151,23 +182,79 @@ function doctor() {
 
   if (!checks.every(([, ok, , required]) => !required || ok)) {
     console.log("");
-    console.log("Install OpenShell and VM dependencies:");
-    console.log("curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh");
-    console.log("brew install e2fsprogs");
+    console.log("Run `charon setup` to create local policy and identity.");
     process.exitCode = 1;
   }
+  printPathAdvice();
+}
+
+function selftestCommand(args = []) {
+  if (!fs.existsSync(CONFIG)) init([]);
+  ensureIdentity();
+  const checks = [];
+  checks.push(runSelftestCheck("status", ["status"], 0));
+  checks.push(runSelftestCheck("pass", ["gate", "--", "node", "-e", "console.log('charon-selftest-pass')"], 0));
+  checks.push(runSelftestCheck("deny file", ["gate", "--", "cat", ".env"], 126));
+  checks.push(runSelftestCheck("deny network", ["gate", "--", "curl", "https://webhook.site/charon-selftest"], 126));
+  if (policyHasPause(loadPolicy())) {
+    checks.push(runSelftestCheck("pause review", ["gate", "--no-prompt", "--", "gh", "release", "create", "charon-selftest"], 125, { allowDeny: true }));
+  } else {
+    checks.push({ name: "pause review", ok: true, detail: "skipped; no pause rules in policy" });
+  }
+  checks.push(runSelftestCheck("verify latest", ["verify", "latest"], 0));
+  if (isAeonRepo()) checks.push(runSelftestCheck("aeon status", ["aeon", "status"], 0));
+
+  console.log("");
+  console.log("Charon selftest");
+  console.log("");
+  for (const check of checks) {
+    console.log(`${check.ok ? "OK " : "NO "} ${check.name}${check.detail ? ` - ${check.detail}` : ""}`);
+  }
+  const failed = checks.filter((check) => !check.ok);
+  if (failed.length) {
+    console.log("");
+    console.log("Run `charon doctor`, then `charon setup`, and retry `charon selftest`.");
+    process.exitCode = 1;
+  }
+  if (!args.includes("--quiet")) printPathAdvice();
+}
+
+function runSelftestCheck(name, args, expected, options = {}) {
+  const result = childProcess.spawnSync(process.execPath, [cliPath(), ...args], {
+    cwd: process.cwd(),
+    env: { ...process.env, CHARON_NO_PROMPT: "1" },
+    encoding: "utf8",
+  });
+  const ok = result.status === expected || (options.allowDeny && result.status === 126);
+  const output = `${result.stdout || ""}${result.stderr || ""}`.trim().split(/\n/).filter(Boolean).slice(-1)[0] || "";
+  return { name, ok, detail: ok ? "" : `exit ${result.status}; ${output}` };
+}
+
+function policyHasPause(policy) {
+  return Boolean(
+    policy &&
+    policy.bounds &&
+    (
+      (Array.isArray(policy.bounds.pause) && policy.bounds.pause.length) ||
+      (Array.isArray(policy.bounds.rules) && policy.bounds.rules.some((rule) => String(rule.verdict || "").toUpperCase() === "PAUSE"))
+    )
+  );
+}
+
+function cliPath() {
+  return path.resolve(__dirname, "..", "..", "bin", "charon.js");
 }
 
 function compileCommand(args) {
-  assertMac();
+  void args;
   const policy = loadPolicy();
-  const compiled = compileOpenShell(policy, process.cwd(), args);
+  const compiled = normalizePolicyForHash(policy);
   ensureDir(GENERATED_DIR);
-  const out = path.join(GENERATED_DIR, "openshell-policy.yml");
-  fs.writeFileSync(out, yaml.dump(compiled.config, { lineWidth: 100 }));
-  console.log(yaml.dump(compiled.config, { lineWidth: 100 }).trimEnd());
+  const out = path.join(GENERATED_DIR, "charon-policy.yml");
+  fs.writeFileSync(out, yaml.dump(compiled, { lineWidth: 100 }));
+  console.log(yaml.dump(compiled, { lineWidth: 100 }).trimEnd());
   console.log("");
-  console.log(`policy_hash: ${compiled.policyHash}`);
+  console.log(`policy_hash: ${hashObject(compiled)}`);
   console.log(`generated: ${path.resolve(out)}`);
 }
 
@@ -211,9 +298,9 @@ function runCommand(args, meta = {}) {
 }
 
 function gateCommand(args, meta = {}) {
-  assertMac();
   const sep = args.indexOf("--");
-  const command = sep >= 0 ? args.slice(sep + 1) : args;
+  const gateFlags = sep >= 0 ? args.slice(0, sep) : [];
+  const command = sep >= 0 ? args.slice(sep + 1) : args.filter((arg) => !arg.startsWith("--"));
   if (!command.length) throw new Error("usage: charon gate -- <command>");
 
   const policy = loadPolicy();
@@ -248,20 +335,16 @@ function gateCommand(args, meta = {}) {
       trace: completeTrace(decision.trace, "not_launched"),
       exitCode: 125,
     });
-    console.error(`PAUSE ${decision.reason}`);
-    console.error(`Queue: ${item.path}`);
-    console.error(`Receipt: ${receipt.path}`);
+    if (shouldPromptForPausedAction(gateFlags)) {
+      return promptPausedAction({ item: item.item, receipt, reason: decision.reason });
+    }
+    printPausedAction({ item: item.item, receipt, reason: decision.reason });
     const err = new Error("action paused");
     err.exitCode = 125;
     throw err;
   }
 
-  const compiled = compileOpenShell(policy, process.cwd(), []);
-  ensureDir(GENERATED_DIR);
-  const policyPath = path.join(GENERATED_DIR, "openshell-policy.yml");
-  fs.writeFileSync(policyPath, yaml.dump(compiled.config, { lineWidth: 100 }));
-
-  const launcher = buildOpenShellCommand(command, policyPath);
+  const launcher = buildLocalCommand(command);
   const startedAt = new Date().toISOString();
   const result = childProcess.spawnSync(launcher[0], launcher.slice(1), {
     cwd: process.cwd(),
@@ -283,10 +366,10 @@ function gateCommand(args, meta = {}) {
     meta,
     exitCode: finalExitCode,
     startedAt,
-    backend: "openshell",
-    generatedPolicy: policyPath,
+    runner: "local",
+    generatedPolicy: "",
     trace: addOutputTrace(completeTrace(decision.trace, exitCode === 0 ? "launched" : "error", {
-      backend: "openshell",
+      runner: "local",
       exitCode: finalExitCode,
     }), outputBoundary),
     output: outputBoundary.receiptOutput,
@@ -305,29 +388,63 @@ function queueCommand(args) {
   }
   for (const file of items) {
     const item = readJson(file);
-    console.log([
-      item.id,
-      pad(item.status || "paused", 8),
-      item.reason || "",
-      item.command ? item.command.join(" ") : "",
-      item.createdAt || "",
-    ].filter(Boolean).join("  "));
+    printQueuedAction(item);
   }
 }
 
 function approveCommand(args) {
-  const id = args[0];
-  if (!id) throw new Error("usage: charon approve <id>");
+  const id = args.find((arg) => !arg.startsWith("--"));
+  const yes = args.includes("--yes");
+  if (!id) throw new Error("usage: charon approve <id> [--yes]");
   const item = loadQueuedAction(id);
   verifyQueuedAction(item);
   if (item.status !== "paused") throw new Error(`queued action is not paused: ${id}`);
   if (item.cwd) process.chdir(item.cwd);
+  const policy = loadPolicy();
+  const currentPolicyHash = hashObject(normalizePolicyForHash(policy));
+  const safety = checkApprovalSafety(item, policy, currentPolicyHash);
+  if (!safety.safe && (!yes || safety.blocking)) {
+    const detail = safety.reasons.join("; ");
+    const suffix = safety.canOverride ? " Re-run with --yes to approve under the current policy." : "";
+    throw new Error(`approval safety check failed: ${detail}.${suffix}`);
+  }
   item.status = "approved";
   item.reviewedAt = new Date().toISOString();
   item.decision = "approved";
+  item.approval = {
+    policyHash: currentPolicyHash,
+    queuedPolicyHash: item.policyHash,
+    safetyReasons: safety.reasons,
+    override: Boolean(yes && !safety.safe),
+  };
   saveQueuedAction(item);
   console.log(`Approved ${id}`);
-  return gateCommand(["--", ...item.command], { ...item.meta, approvedQueueId: id });
+  if (safety.reasons.length) console.log(`Approval note: ${safety.reasons.join("; ")}`);
+  return gateCommand(["--", ...item.command], { ...item.meta, approvedQueueId: id, approvalPolicyHash: currentPolicyHash });
+}
+
+function checkApprovalSafety(item, policy, currentPolicyHash) {
+  const reasons = [];
+  let blocking = false;
+  if (item.policyHash && item.policyHash !== currentPolicyHash) {
+    reasons.push(`policy changed queued=${item.policyHash} current=${currentPolicyHash}`);
+  }
+  const decision = decideAction(item.command, policy);
+  if (decision.verdict === "DENY") {
+    reasons.push(`current policy now denies action: ${decision.reason}`);
+    blocking = true;
+  } else if (decision.verdict === "PASS") {
+    reasons.push("current policy would pass this action without approval");
+  } else if (decision.verdict === "PAUSE" && item.reason && decision.reason !== item.reason) {
+    reasons.push(`pause reason changed from ${item.reason} to ${decision.reason}`);
+  }
+  return {
+    safe: reasons.length === 0,
+    blocking,
+    canOverride: !blocking,
+    reasons,
+    currentDecision: decision.verdict,
+  };
 }
 
 function rejectCommand(args) {
@@ -354,6 +471,7 @@ function rejectCommand(args) {
 }
 
 function statusCommand(args) {
+  if (!args.length) return printStatusDashboard();
   const target = args[0] || "latest";
   if (target === "latest") return receiptsCommand(["latest"]);
   const queued = queueFiles().find((file) => path.basename(file, ".json") === target);
@@ -406,20 +524,37 @@ function createCharon(options = {}) {
           trace: completeTrace(decision.trace, decision.verdict === "PASS" ? "not_launched" : "not_launched"),
           exitCode,
         });
-        return {
-          pass: decision.verdict === "PASS",
-          pause: decision.verdict === "PAUSE",
-          deny: decision.verdict === "DENY",
-          verdict: decision.verdict,
-          reason: decision.reason,
-          trace: receipt.receipt.trace,
-          receipt: receipt.path,
-          queueId,
-        };
+        return sdkDecision({ decision, receipt, queueId, exitCode, command, meta });
       } finally {
         process.chdir(previous);
       }
     },
+  };
+}
+
+function sdkDecision({ decision, receipt, queueId, exitCode, command, meta }) {
+  const verdict = decision.verdict;
+  return {
+    schema: "charon.sdkDecision.v1",
+    verdict,
+    allowed: verdict === "PASS",
+    blocked: verdict === "DENY",
+    queued: verdict === "PAUSE",
+    pass: verdict === "PASS",
+    pause: verdict === "PAUSE",
+    deny: verdict === "DENY",
+    reason: decision.reason,
+    trace: receipt.receipt.trace,
+    receipt: receipt.path,
+    receiptId: path.basename(receipt.path, ".json"),
+    queueId,
+    exitCode,
+    command: receipt.receipt.command,
+    policyHash: receipt.receipt.policyHash,
+    runtime: meta.runtime,
+    skill: meta.skill || "",
+    toolName: meta.toolName || "unknown",
+    context: meta.context || "",
   };
 }
 
@@ -488,13 +623,8 @@ function policyApplyCommand(args) {
   console.log(`Policy: ${path.resolve(CONFIG)}`);
 }
 
-function buildOpenShellCommand(command, policyPath) {
-  const mock = process.env.CHARON_OPEN_SHELL_MOCK;
-  if (mock) return [mock, policyPath, ...command];
-  if (!hasCommand("openshell")) {
-    throw new Error("OpenShell CLI not found. Run `charon doctor` for install guidance.");
-  }
-  return ["openshell", "sandbox", "create", "--policy", policyPath, "--", ...command];
+function buildLocalCommand(command) {
+  return command;
 }
 
 function receiptsCommand(args) {
@@ -551,7 +681,40 @@ function aeonCommand(args) {
   if (sub === "status") return aeonStatus(rest);
   if (sub === "disable") return aeonDisable(rest);
   if (sub === "run") return aeonRun(rest);
-  throw new Error("usage: charon aeon init | enable | status | disable | run <skill> [-- <command>]");
+  if (sub === "passport") return aeonPassport(rest);
+  throw new Error("usage: charon aeon init | enable | status | disable | run <skill> [-- <command>] | passport [skill] [--json]");
+}
+
+function aeonSetup(args) {
+  assertAeonRepo();
+  const globalInstall = ensureGlobalCommand(args);
+  const force = args.includes("--force");
+  if (!fs.existsSync(CONFIG) || force) {
+    aeonInit(force ? ["--force"] : []);
+  } else {
+    ensureDir(RECEIPTS_DIR);
+    ensureDir(QUEUE_DIR);
+    console.log(`Using existing ${CONFIG}.`);
+  }
+  ensureIdentity();
+  aeonEnable(args);
+  const proposal = synthesizePolicyProposal(loadPolicy());
+  ensureDir(PROPOSALS_DIR);
+  const file = path.join(PROPOSALS_DIR, `${proposal.id}.json`);
+  fs.writeFileSync(file, `${JSON.stringify(proposal, null, 2)}\n`);
+  printSetupSummary({
+    title: "Charon is protecting Aeon.",
+    mode: "aeon",
+    steps: [
+      ["policy", path.resolve(CONFIG)],
+      ["identity", path.resolve(IDENTITY_FILE)],
+      ["command", globalInstall],
+      ["aeon hook", path.resolve(path.join(".charon", "aeon", "run-skill.js"))],
+      ["runner", path.resolve(path.join("scripts", "charon-aeon-runner.js"))],
+      ["policy proposal", path.resolve(file)],
+      ["next", "use Aeon normally"],
+    ],
+  });
 }
 
 function aeonInit(args) {
@@ -559,17 +722,20 @@ function aeonInit(args) {
   if (!fs.existsSync(CONFIG) || args.includes("--force")) {
     const policy = defaultPolicy();
     policy.agent = { runtime: "aeon" };
-    policy.sandbox.files.write = ["articles/**", "reports/**", "memory/**", ".charon/**"];
+    policy.controls.files.write = ["articles/**", "reports/**", "memory/**", ".charon/**"];
     fs.writeFileSync(CONFIG, yaml.dump(policy, { lineWidth: 100 }));
   }
   ensureDir(RECEIPTS_DIR);
+  ensureDir(QUEUE_DIR);
+  ensureIdentity();
   console.log("Charon initialized for Aeon.");
   console.log(`- policy: ${path.resolve(CONFIG)}`);
 }
 
 function aeonEnable(args) {
   assertAeonRepo();
-  aeonInit(args);
+  if (!fs.existsSync(CONFIG) || args.includes("--force")) aeonInit(args);
+  else ensureDir(RECEIPTS_DIR);
   const hookDir = path.join(".charon", "aeon");
   ensureDir(hookDir);
   const hook = path.join(hookDir, "run-skill.js");
@@ -637,11 +803,170 @@ function aeonRun(args) {
   return runCommand(["--", ...command], { runtime: "aeon", skill, skillFile: path.resolve(skillFile) });
 }
 
+function aeonPassport(args) {
+  assertAeonRepo();
+  const json = args.includes("--json");
+  const target = args.find((arg) => !arg.startsWith("-"));
+  const passports = buildAeonPassports();
+  const selected = target ? passports.filter((item) => item.skill === target) : passports;
+  if (target && !selected.length) throw new Error(`Aeon skill not found: ${target}`);
+  if (json) {
+    console.log(JSON.stringify(target ? selected[0] : selected, null, 2));
+    return;
+  }
+  if (target) return printAeonPassport(selected[0], { detailed: true });
+  console.log(`Aeon passports (${selected.length} skills)`);
+  console.log("");
+  for (const item of selected) {
+    console.log([
+      pad(item.risk.toUpperCase(), 6),
+      item.skill,
+      `hosts=${item.network.hosts.length}`,
+      `reads=${item.files.reads.length}`,
+      `writes=${item.files.writes.length}`,
+      item.irreversible ? "irreversible=yes" : "irreversible=no",
+    ].join("  "));
+  }
+  console.log("");
+  console.log("Inspect one skill with: charon aeon passport <skill>");
+}
+
 function defaultAeonCommand(skillFile) {
   if (!hasCommand("claude")) {
-    return ["sh", "-lc", `echo "Claude CLI not found. Verified Charon sandbox launch for ${shellQuote(skillFile)}."`];
+    return ["sh", "-lc", `echo "Claude CLI not found. Verified Charon gate launch for ${shellQuote(skillFile)}."`];
   }
   return ["sh", "-lc", `claude -p - < ${shellQuote(skillFile)}`];
+}
+
+function ensureIdentity() {
+  if (fs.existsSync(IDENTITY_FILE) && fs.existsSync(IDENTITY_KEY_FILE)) return;
+  keygenCommand([]);
+}
+
+function ensureGlobalCommand(args) {
+  if (args.includes("--no-global")) return "skipped (--no-global)";
+  if (process.env.CHARON_SKIP_GLOBAL_INSTALL || process.env.CI) return "skipped";
+  const existing = commandPath("charon");
+  if (existing) return existing;
+  console.log("Installing Charon command...");
+  const result = childProcess.spawnSync("npm", ["install", "-g", "github:CharonAI-code/charon"], {
+    stdio: "inherit",
+  });
+  if (result.status === 0) {
+    return commandPath("charon") || "installed globally";
+  }
+  console.log("");
+  console.log("Could not install global `charon` command automatically.");
+  console.log("You can still run Charon with: npx github:CharonAI-code/charon <command>");
+  return "npx fallback";
+}
+
+function printSetupSummary(input) {
+  console.log("");
+  console.log(input.title);
+  console.log("");
+  console.log(`Mode: ${input.mode}`);
+  for (const [label, value] of input.steps) {
+    console.log(`- ${label}: ${value}`);
+  }
+  console.log("");
+  console.log("Runtime behavior:");
+  console.log("- safe actions run after policy check");
+  console.log("- risky actions pause for review");
+  console.log("- forbidden actions are denied before launch");
+  console.log("- receipts are written for every decision");
+  printPathAdvice();
+}
+
+function shouldPromptForPausedAction(args) {
+  if (args.includes("--no-prompt")) return false;
+  if (process.env.CI || process.env.CHARON_NO_PROMPT) return false;
+  return Boolean(process.stdin.isTTY && process.stderr.isTTY);
+}
+
+function promptPausedAction({ item, receipt, reason }) {
+  printPausedAction({ item, receipt, reason });
+  process.stderr.write("\nApprove this action now? [y/N] ");
+  const input = childProcess.spawnSync("sh", ["-c", "IFS= read -r answer; printf %s \"$answer\""], {
+    stdio: ["inherit", "pipe", "inherit"],
+    encoding: "utf8",
+  });
+  const answer = String(input.stdout || "").trim().toLowerCase();
+  if (answer === "y" || answer === "yes") {
+    console.error("");
+    return approveCommand([item.id]);
+  }
+  console.error("");
+  console.error(`Left paused. Review later with: charon approve ${item.id}`);
+  process.exitCode = 125;
+}
+
+function printPausedAction({ item, receipt, reason }) {
+  console.error("");
+  console.error("Charon paused this action.");
+  console.error("");
+  console.error("Verdict: PAUSE");
+  console.error(`Agent: ${formatMetaActor(item.meta)}`);
+  console.error(`Action: ${item.command.join(" ")}`);
+  console.error(`Reason: ${reason}`);
+  console.error(`Queue: ${item.id}`);
+  console.error(`Receipt: ${receipt.path}`);
+}
+
+function printQueuedAction(item) {
+  console.log(`${item.id}  ${item.status || "paused"}`);
+  console.log(`  agent: ${formatMetaActor(item.meta)}`);
+  console.log(`  action: ${item.command ? item.command.join(" ") : ""}`);
+  console.log(`  reason: ${item.reason || ""}`);
+  console.log(`  created: ${item.createdAt || ""}`);
+}
+
+function formatMetaActor(meta = {}) {
+  const runtime = meta.runtime || "local";
+  const skill = meta.skill ? `:${meta.skill}` : "";
+  const tool = meta.toolName ? ` via ${meta.toolName}` : "";
+  return `${runtime}${skill}${tool}`;
+}
+
+function printStatusDashboard() {
+  const aeon = isAeonRepo();
+  const queues = queueFiles().map(readJson);
+  const paused = queues.filter((item) => item.status === "paused").length;
+  const latestReceipt = receiptFiles()[0];
+  console.log("Charon status");
+  console.log("");
+  console.log(`Mode: ${aeon ? "aeon" : "local"}`);
+  console.log(`Policy: ${fs.existsSync(CONFIG) ? path.resolve(CONFIG) : "missing"}`);
+  console.log(`Identity: ${fs.existsSync(IDENTITY_FILE) ? "signed" : "missing"}`);
+  console.log("Runtime: local");
+  if (aeon) {
+    console.log(`Aeon hook: ${fs.existsSync(path.join(".charon", "aeon", "run-skill.js")) ? "enabled" : "missing"}`);
+  }
+  console.log(`Paused actions: ${paused}`);
+  console.log(`Receipts: ${receiptFiles().length}`);
+  if (latestReceipt) {
+    const receipt = readJson(latestReceipt);
+    console.log(`Latest: ${receipt.verdict} ${receipt.command ? receipt.command.join(" ") : ""}`);
+  }
+  printPathAdvice();
+}
+
+function printPathAdvice() {
+  const npmBin = npmGlobalBin();
+  if (!npmBin || commandPath("charon")) return;
+  const pathParts = String(process.env.PATH || "").split(path.delimiter);
+  if (pathParts.includes(npmBin)) return;
+  console.log("");
+  console.log("PATH fix:");
+  console.log(`  export PATH="${npmBin}:$PATH"`);
+  console.log(`  echo 'export PATH="${npmBin}:$PATH"' >> ~/.zshrc`);
+}
+
+function npmGlobalBin() {
+  const result = childProcess.spawnSync("npm", ["prefix", "-g"], { encoding: "utf8" });
+  if (result.status !== 0) return "";
+  const prefix = result.stdout.trim();
+  return prefix ? path.join(prefix, "bin") : "";
 }
 
 function defaultPolicy() {
@@ -657,8 +982,7 @@ function defaultPolicy() {
         { id: "release.git_push", verdict: "PAUSE", command: "git", argsIncludes: ["push"] },
       ],
     },
-    sandbox: {
-      backend: "openshell",
+    controls: {
       files: {
         read: ["."],
         write: [".charon/**"],
@@ -697,7 +1021,7 @@ function validatePolicy(policy) {
     policy.bounds = {
       pass: [],
       pause: [],
-      deny: policy.sandbox && policy.sandbox.commands ? policy.sandbox.commands.deny || [] : [],
+      deny: policy.controls && policy.controls.commands ? policy.controls.commands.deny || [] : [],
     };
   }
   for (const key of ["pass", "pause", "deny"]) {
@@ -710,19 +1034,19 @@ function validatePolicy(policy) {
     throw new Error("bounds.secretAction must be deny, pause, or pass");
   }
   if (!Array.isArray(policy.bounds.rules)) policy.bounds.rules = [];
-  const sandbox = policy.sandbox;
-  if (!sandbox || typeof sandbox !== "object") throw new Error(`${CONFIG} missing sandbox`);
+  const controls = policy.controls;
+  if (!controls || typeof controls !== "object") throw new Error(`${CONFIG} missing controls`);
   for (const key of ["files", "network", "commands", "env"]) {
-    if (!sandbox[key] || typeof sandbox[key] !== "object") throw new Error(`${CONFIG} missing sandbox.${key}`);
+    if (!controls[key] || typeof controls[key] !== "object") throw new Error(`${CONFIG} missing controls.${key}`);
   }
-  if (!sandbox.output || typeof sandbox.output !== "object") {
-    sandbox.output = { secretAction: "deny", store: "redacted", maxBytes: 4000 };
+  if (!controls.output || typeof controls.output !== "object") {
+    controls.output = { secretAction: "deny", store: "redacted", maxBytes: 4000 };
   }
-  if (!["deny", "pause", "pass"].includes(sandbox.output.secretAction || "deny")) {
-    throw new Error("sandbox.output.secretAction must be deny, pause, or pass");
+  if (!["deny", "pause", "pass"].includes(controls.output.secretAction || "deny")) {
+    throw new Error("controls.output.secretAction must be deny, pause, or pass");
   }
-  if (!["none", "redacted"].includes(sandbox.output.store || "redacted")) {
-    throw new Error("sandbox.output.store must be none or redacted");
+  if (!["none", "redacted"].includes(controls.output.store || "redacted")) {
+    throw new Error("controls.output.store must be none or redacted");
   }
   for (const [section, keys] of Object.entries({
     files: ["read", "write", "deny"],
@@ -731,68 +1055,26 @@ function validatePolicy(policy) {
     env: ["expose", "deny"],
   })) {
     for (const key of keys) {
-      const value = sandbox[section][key];
+      const value = controls[section][key];
       if (!Array.isArray(value) || !value.every((x) => typeof x === "string")) {
-        throw new Error(`sandbox.${section}.${key} must be a string array`);
+        throw new Error(`controls.${section}.${key} must be a string array`);
       }
     }
   }
 }
 
-function compileOpenShell(policy, cwd) {
+function normalizePolicyForHash(policy) {
   validatePolicy(policy);
-  const sandbox = policy.sandbox;
-  const readOnly = sandbox.files.read
-    .filter((item) => item !== ".")
-    .map((item) => absolutizePolicyPath(item, cwd));
-  const readWrite = sandbox.files.write
-    .filter((item) => item !== ".")
-    .map((item) => absolutizePolicyPath(item, cwd));
-  const networkPolicies = {};
-  for (const host of sandbox.network.allow) {
-    const key = host.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "host";
-    networkPolicies[key] = {
-      name: key,
-      endpoints: [
-        {
-          host,
-          port: 443,
-          protocol: "rest",
-          enforcement: "enforce",
-          access: "read-only",
-        },
-      ],
-      binaries: [
-        { path: "/bin/**" },
-        { path: "/usr/bin/**" },
-        { path: "/usr/local/bin/**" },
-        { path: "/opt/homebrew/bin/**" },
-        { path: "/sandbox/**" },
-      ],
-    };
-  }
-  const body = {
+  return {
     version: 1,
-    filesystem_policy: {
-      include_workdir: true,
-      read_only: readOnly,
-      read_write: ["/sandbox", "/tmp", "/dev/null", ...readWrite],
-    },
-    landlock: {
-      compatibility: "best_effort",
-    },
-    process: {
-      run_as_user: "sandbox",
-      run_as_group: "sandbox",
-    },
-    network_policies: networkPolicies,
+    bounds: policy.bounds,
+    controls: policy.controls,
   };
-  return { config: body, policyHash: hashObject(body) };
 }
 
 function decideAction(command, policy) {
-  const rendered = command.join(" ");
-  const trace = buildBoundaryTrace(command, policy);
+  const action = normalizeAction(command);
+  const trace = buildBoundaryTrace(command, policy, action);
   if (trace.secrets.status === "denied") {
     return { verdict: "DENY", reason: `secret-like value in action: ${trace.secrets.kinds.join(", ")}`, trace };
   }
@@ -820,18 +1102,17 @@ function buildApprovedDecision(command, policy, queueId) {
   return { verdict: "PASS", reason: `approved paused action: ${queueId}`, trace };
 }
 
-function buildBoundaryTrace(command, policy) {
-  const rendered = command.join(" ");
-  const secrets = scanSecrets(rendered);
+function buildBoundaryTrace(command, policy, action = normalizeAction(command)) {
+  const secrets = scanSecrets(action.searchText);
   const secretKinds = [...new Set(secrets.map((item) => item.kind))];
-  const deniedFiles = detectDeniedFiles(rendered, policy);
-  const network = detectNetworkHosts(rendered, policy);
-  const ruleMatch = matchStructuredRule(command, policy);
-  const deniedAction = [...policy.bounds.deny, ...policy.sandbox.commands.deny]
-    .find((item) => actionMatches(rendered, item));
-  const pausedAction = policy.bounds.pause.find((item) => actionMatches(rendered, item));
+  const deniedFiles = detectDeniedFiles(action, policy);
+  const network = detectNetworkHosts(action, policy);
+  const ruleMatch = matchStructuredRule(command, policy, action);
+  const deniedAction = [...policy.bounds.deny, ...policy.controls.commands.deny]
+    .find((item) => actionMatches(action, item));
+  const pausedAction = policy.bounds.pause.find((item) => actionMatches(action, item));
   const secretAction = policy.bounds.secretAction || "deny";
-  return {
+  const trace = {
     schema: "charon.trace.v1",
     identity: {
       status: "unsigned",
@@ -845,37 +1126,91 @@ function buildBoundaryTrace(command, policy) {
       : { status: "clean", matches: [] },
     network,
     action: ruleMatch
-      ? { status: normalizeVerdictStatus(ruleMatch.verdict), match: ruleMatch.id, rule: ruleMatch }
+      ? { status: normalizeVerdictStatus(ruleMatch.verdict), match: ruleMatch.id, rule: ruleMatch, normalized: action.summary }
       : deniedAction
-      ? { status: "denied", match: deniedAction }
+      ? { status: "denied", match: deniedAction, normalized: action.summary }
       : pausedAction
-        ? { status: "paused", match: pausedAction }
-        : { status: "passed", match: "" },
-    sandbox: {
+        ? { status: "paused", match: pausedAction, normalized: action.summary }
+        : { status: "passed", match: "", normalized: action.summary },
+    execution: {
       status: "pending",
-      backend: policy.sandbox.backend || "openshell",
     },
   };
+  trace.explain = explainBoundaryTrace(trace, action);
+  return trace;
 }
 
-function matchStructuredRule(command, policy) {
-  const rules = Array.isArray(policy.bounds.rules) ? policy.bounds.rules : [];
-  return rules.find((rule) => structuredRuleMatches(command, rule));
-}
-
-function structuredRuleMatches(command, rule) {
-  if (!rule || typeof rule !== "object") return false;
-  const first = command[0] || "";
-  if (rule.command && first !== rule.command) return false;
-  const rendered = command.join(" ");
-  if (rule.includes && !rendered.includes(rule.includes)) return false;
-  if (Array.isArray(rule.argsIncludes)) {
-    for (const part of rule.argsIncludes) {
-      if (!command.slice(1).some((arg) => String(arg).includes(part))) return false;
-    }
+function explainBoundaryTrace(trace, action) {
+  const lines = [];
+  const normalized = (action.commandStrings || []).filter(Boolean).map((text) => redactText(text).value);
+  if (normalized.length) lines.push(`normalized commands: ${normalized.join(" | ")}`);
+  if (action.shell && action.shell.segments && action.shell.segments.length > 1) {
+    lines.push(`shell chain: ${action.shell.segments.map((segment) => redactText(segment.rendered).value).join(" -> ")}`);
   }
-  if (rule.toolName && !rendered.includes(rule.toolName)) return false;
+  if (action.script) {
+    lines.push(`package script ${action.script.name}: ${redactText(action.script.rendered).value}`);
+  }
+  if (action.pathHints && action.pathHints.length) {
+    lines.push(`path hints: ${action.pathHints.join(", ")}`);
+  }
+  if (action.networkHosts && action.networkHosts.length) {
+    lines.push(`network hints: ${action.networkHosts.join(", ")}`);
+  }
+  if (trace.secrets && trace.secrets.status !== "clean") {
+    lines.push(`secret scan: ${trace.secrets.status} ${trace.secrets.kinds.join(",")}`);
+  }
+  if (trace.files && trace.files.status === "denied") {
+    lines.push(`file decision: denied by ${trace.files.matches.join(",")}`);
+  }
+  if (trace.network && trace.network.status === "denied") {
+    lines.push(`network decision: denied ${trace.network.denied.join(",")}`);
+  } else if (trace.network && trace.network.status === "allowed") {
+    lines.push(`network decision: allowed ${trace.network.allowed.join(",")}`);
+  }
+  if (trace.action && trace.action.match) {
+    lines.push(`action decision: ${trace.action.status} by ${trace.action.match}`);
+  }
+  return lines;
+}
+
+function matchStructuredRule(command, policy, action = normalizeAction(command)) {
+  const rules = Array.isArray(policy.bounds.rules) ? policy.bounds.rules : [];
+  return rules.find((rule) => structuredRuleMatches(action, rule));
+}
+
+function structuredRuleMatches(action, rule) {
+  if (!rule || typeof rule !== "object") return false;
+  const commandCandidates = action.commandCandidates;
+  if (rule.command) {
+    const commands = Array.isArray(rule.command) ? rule.command : [rule.command];
+    if (!commands.some((cmd) => commandCandidates.includes(String(cmd)))) return false;
+  }
+  if (rule.includes && !action.searchText.includes(rule.includes)) return false;
+  if (Array.isArray(rule.argsIncludes) && !argsIncludeAll(action.argCandidates, rule.argsIncludes)) return false;
+  if (rule.args && typeof rule.args === "object") {
+    if (Array.isArray(rule.args.includes) && !argsIncludeAll(action.argCandidates, rule.args.includes)) return false;
+    if (Array.isArray(rule.args.excludes) && argsIncludeAny(action.argCandidates, rule.args.excludes)) return false;
+    if (Array.isArray(rule.args.exact) && !argsEqualAny(action.argCandidates, rule.args.exact)) return false;
+    if (Array.isArray(rule.args.startsWith) && !argsStartWithAny(action.argCandidates, rule.args.startsWith)) return false;
+  }
+  if (rule.toolName && !action.searchText.includes(rule.toolName)) return false;
   return true;
+}
+
+function argsIncludeAll(argSets, parts) {
+  return parts.every((part) => argSets.some((args) => args.some((arg) => String(arg).includes(String(part)))));
+}
+
+function argsIncludeAny(argSets, parts) {
+  return parts.some((part) => argSets.some((args) => args.some((arg) => String(arg).includes(String(part)))));
+}
+
+function argsEqualAny(argSets, expected) {
+  return argSets.some((args) => stableJson(args.map(String)) === stableJson(expected.map(String)));
+}
+
+function argsStartWithAny(argSets, expected) {
+  return argSets.some((args) => expected.every((part, index) => String(args[index] || "") === String(part)));
 }
 
 function normalizeVerdictStatus(verdict) {
@@ -885,51 +1220,60 @@ function normalizeVerdictStatus(verdict) {
   return "passed";
 }
 
-function completeTrace(trace, sandboxStatus, extra = {}) {
+function completeTrace(trace, executionStatus, extra = {}) {
   return {
     ...trace,
-    sandbox: {
-      ...(trace && trace.sandbox ? trace.sandbox : {}),
-      status: sandboxStatus,
+    execution: {
+      ...(trace && trace.execution ? trace.execution : {}),
+      status: executionStatus,
       ...extra,
     },
   };
 }
 
-function detectDeniedFiles(rendered, policy) {
-  return policy.sandbox.files.deny.filter((item) => rendered.includes(stripGlob(item)));
+function detectDeniedFiles(action, policy) {
+  return policy.controls.files.deny.filter((item) => actionReferencesPath(action, item));
 }
 
-function detectNetworkHosts(rendered, policy) {
-  const hosts = extractHosts(rendered);
+function detectNetworkHosts(action, policy) {
+  const hosts = [...new Set([...extractHosts(action.searchText), ...(action.networkHosts || [])])].sort();
   if (!hosts.length) return { status: "not_requested", hosts: [], denied: [], allowed: [] };
-  const allowed = hosts.filter((host) => hostAllowed(host, policy.sandbox.network.allow));
-  const denied = hosts.filter((host) => !hostAllowed(host, policy.sandbox.network.allow));
+  const allowed = hosts.filter((host) => hostAllowed(host, policy.controls.network.allow));
+  const denied = hosts.filter((host) => !hostAllowed(host, policy.controls.network.allow));
   return denied.length
     ? { status: "denied", hosts, denied, allowed }
     : { status: "allowed", hosts, denied: [], allowed };
 }
 
 function extractHosts(value) {
-  const hosts = new Set();
-  const urlRe = /\bhttps?:\/\/([a-zA-Z0-9.-]+)(?::\d+)?(?:[/?#][^\s"']*)?/g;
-  for (const match of String(value || "").matchAll(urlRe)) {
-    hosts.add(match[1].toLowerCase());
-  }
-  return [...hosts];
+  return normalizationCore.extractHosts(value);
 }
 
 function hostAllowed(host, allowlist) {
   return allowlist.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
 }
 
-function stripGlob(value) {
-  return expandPath(value).replace(/\*\*$/g, "").replace(/\*$/g, "").replace(/\/$/g, "");
+function actionMatches(action, pattern) {
+  const value = String(pattern || "");
+  if (value.startsWith("read:")) return actionReferencesPath(action, value.slice("read:".length));
+  return action.searchText.includes(value) || action.commandStrings.some((text) => text.includes(value));
 }
 
-function actionMatches(rendered, pattern) {
-  if (pattern.startsWith("read:")) return rendered.includes(pattern.slice("read:".length).replace(/\*\*$/g, ""));
-  return rendered.includes(pattern);
+function normalizeAction(command) {
+  return createNormalizer().normalizeAction(command);
+}
+
+function actionReferencesPath(action, pattern) {
+  return createNormalizer().actionReferencesPath(action, pattern);
+}
+
+function createNormalizer() {
+  return normalizationCore.createActionNormalizer({
+    cwd: process.cwd(),
+    readJson,
+    redactText,
+    expandPath,
+  });
 }
 
 function scanSecrets(value) {
@@ -968,9 +1312,9 @@ function redactCommand(command) {
 function scanOutputBoundary(stdout, stderr, policy) {
   const output = `${stdout || ""}${stderr || ""}`;
   const redacted = redactText(output);
-  const maxBytes = Number(policy.sandbox.output.maxBytes || 4000);
-  const store = policy.sandbox.output.store || "redacted";
-  const action = policy.sandbox.output.secretAction || "deny";
+  const maxBytes = Number(policy.controls.output.maxBytes || 4000);
+  const store = policy.controls.output.store || "redacted";
+  const action = policy.controls.output.secretAction || "deny";
   const hasSecrets = redacted.redactions.length > 0;
   const status = hasSecrets
     ? action === "pause" ? "paused" : action === "pass" ? "passed" : "denied"
@@ -1007,8 +1351,8 @@ function truncateOutput(value, maxBytes) {
 
 function scrubEnv(env, policy) {
   const out = {};
-  const expose = new Set(policy.sandbox.env.expose);
-  const deny = new Set(policy.sandbox.env.deny);
+  const expose = new Set(policy.controls.env.expose);
+  const deny = new Set(policy.controls.env.deny);
   for (const [key, value] of Object.entries(env)) {
     if (deny.has(key)) continue;
     if (key.startsWith("CHARON_")) out[key] = value;
@@ -1020,7 +1364,7 @@ function scrubEnv(env, policy) {
 
 function writeReceipt(input) {
   ensureDir(RECEIPTS_DIR);
-  const policyHash = hashObject(compileOpenShell(input.policy, process.cwd()).config);
+  const policyHash = hashObject(normalizePolicyForHash(input.policy));
   const redactedCommand = redactCommand(input.command);
   const redactedReason = redactText(input.reason || "");
   const body = {
@@ -1030,15 +1374,15 @@ function writeReceipt(input) {
     endedAt: new Date().toISOString(),
     verdict: input.verdict,
     reason: redactedReason.value,
-    backend: input.backend || "openshell",
+    runner: input.runner || "local",
     command: redactedCommand.value,
     commandRedactions: redactedCommand.redactions,
     reasonRedactions: redactedReason.redactions,
     cwd: process.cwd(),
     policyHash,
     generatedPolicy: input.generatedPolicy ? path.resolve(input.generatedPolicy) : "",
-    exposedEnv: input.policy.sandbox.env.expose,
-    deniedEnv: input.policy.sandbox.env.deny,
+    exposedEnv: input.policy.controls.env.expose,
+    deniedEnv: input.policy.controls.env.deny,
     exitCode: input.exitCode,
     trace: input.trace || completeTrace(buildBoundaryTrace(input.command, input.policy), "unknown"),
     output: input.output || { status: "not_captured" },
@@ -1131,7 +1475,7 @@ function enqueueAction(input) {
     commandRedactions: redactedCommand.redactions,
     reason: redactedReason.value,
     reasonRedactions: redactedReason.redactions,
-    policyHash: hashObject(compileOpenShell(input.policy, process.cwd()).config),
+    policyHash: hashObject(normalizePolicyForHash(input.policy)),
     meta: input.meta || {},
   };
   item.signature = signQueueItem(item);
@@ -1198,8 +1542,8 @@ function synthesizePolicyProposal(policy) {
   for (const change of inferAeonSkillChanges(policy)) changes.push(change);
   for (const change of inferTraceChanges(policy)) changes.push(change);
   for (const item of [".env", ".env.*", "~/.ssh/**", "~/.aws/**", "~/.config/gh/**"]) {
-    if (!policy.sandbox.files.deny.includes(item)) {
-      changes.push(policyChange("tighten", "sandbox.files.deny", "add", item, "protect common sensitive path"));
+    if (!policy.controls.files.deny.includes(item)) {
+      changes.push(policyChange("tighten", "controls.files.deny", "add", item, "protect common sensitive path"));
     }
   }
   const deduped = dedupeChanges(changes);
@@ -1255,21 +1599,140 @@ function hasStructuredRule(policy, id) {
 function inferAeonSkillChanges(policy) {
   const changes = [];
   if (!fs.existsSync("skills")) return changes;
-  for (const skill of listDirectories("skills")) {
-    const file = path.join("skills", skill, "SKILL.md");
-    if (!fs.existsSync(file)) continue;
-    const text = fs.readFileSync(file, "utf8");
-    const reportPath = `reports/${skill}/**`;
-    if (/report|audit|summary|write/i.test(text) && !policy.sandbox.files.write.includes(reportPath)) {
-      changes.push(policyChange("loosen", "sandbox.files.write", "add", reportPath, `skill ${skill} appears to write reports`));
-    }
-    for (const host of extractHosts(text)) {
-      if (!hostAllowed(host, policy.sandbox.network.allow)) {
-        changes.push(policyChange("loosen", "sandbox.network.allow", "add", host, `skill ${skill} references host`));
+  for (const passport of buildAeonPassports()) {
+    for (const readPath of passport.files.reads) {
+      if (!policy.controls.files.read.includes(readPath)) {
+        changes.push(policyChange("loosen", "controls.files.read", "add", readPath, `skill ${passport.skill} appears to read ${readPath}`));
       }
+    }
+    for (const writePath of passport.files.writes) {
+      if (!policy.controls.files.write.includes(writePath)) {
+        changes.push(policyChange("loosen", "controls.files.write", "add", writePath, `skill ${passport.skill} appears to write ${writePath}`));
+      }
+    }
+    for (const host of passport.network.hosts) {
+      if (!hostAllowed(host, policy.controls.network.allow)) {
+        changes.push(policyChange("loosen", "controls.network.allow", "add", host, `skill ${passport.skill} references host`));
+      }
+    }
+    for (const secret of passport.secrets) {
+      if (!policy.controls.env.deny.includes(secret) && !policy.controls.env.expose.includes(secret)) {
+        changes.push(policyChange("tighten", "controls.env.deny", "add", secret, `skill ${passport.skill} references secret-like env name`));
+      }
+    }
+    if (passport.irreversible && !hasStructuredRule(policy, `aeon.${passport.skill}.irreversible`)) {
+      changes.push(policyChange("tighten", "bounds.rules", "add", {
+        id: `aeon.${passport.skill}.irreversible`,
+        verdict: "PAUSE",
+        includes: passport.actions.join(" ") || passport.skill,
+      }, `review irreversible action hints in skill ${passport.skill}`));
     }
   }
   return changes;
+}
+
+function buildAeonPassports() {
+  if (!fs.existsSync("skills")) return [];
+  return listDirectories("skills").map((skill) => {
+    const file = path.join("skills", skill, "SKILL.md");
+    const text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+    const hosts = [...extractHosts(text)].sort();
+    const secrets = [...extractSecretNames(text)].sort();
+    const reads = inferAeonReads(text, skill);
+    const writes = inferAeonWrites(text, skill);
+    const actions = inferAeonActions(text);
+    const irreversible = actions.some((action) => action.irreversible);
+    return {
+      skill,
+      risk: scoreAeonRisk({ hosts, secrets, reads, writes, actions, text }),
+      secrets,
+      network: { hosts },
+      files: { reads, writes },
+      actions: actions.map((action) => action.name),
+      irreversible,
+      policy: {
+        config: fs.existsSync(CONFIG),
+        generatedProposalCount: proposalFiles().length,
+      },
+    };
+  }).sort((a, b) => a.skill.localeCompare(b.skill));
+}
+
+function extractSecretNames(text) {
+  const secrets = new Set();
+  const re = /\b[A-Z][A-Z0-9_]{2,}_(?:API_KEY|KEY|TOKEN|SECRET|WEBHOOK_URL)\b/g;
+  for (const match of String(text || "").matchAll(re)) secrets.add(match[0]);
+  return secrets;
+}
+
+function inferAeonReads(text, skill) {
+  const reads = new Set();
+  const lower = String(text || "").toLowerCase();
+  if (/\b(read|inspect|load|open|review|analy[sz]e|summari[sz]e)\b/i.test(text)) reads.add(`skills/${skill}/**`);
+  if (lower.includes("memory")) reads.add("memory/**");
+  if (lower.includes("article") || lower.includes("blog")) reads.add("articles/**");
+  if (lower.includes("report") || lower.includes("audit")) reads.add("reports/**");
+  if (lower.includes("package.json")) reads.add("package.json");
+  return [...reads].sort();
+}
+
+function inferAeonWrites(text, skill) {
+  const writes = new Set();
+  const lower = String(text || "").toLowerCase();
+  if (/\b(report|audit|summary|write|save|create|generate)\b/i.test(text)) writes.add(`reports/${skill}/**`);
+  if (lower.includes("article") || lower.includes("blog") || lower.includes("publish article")) writes.add("articles/**");
+  if (lower.includes("memory")) writes.add("memory/**");
+  if (lower.includes("output") || lower.includes("artifact")) writes.add(".outputs/**");
+  if (/\b(issue|pull request|pr|github)\b/i.test(text)) writes.add("github:issues-prs");
+  if (/\b(slack|discord|telegram|email|notify|notification)\b/i.test(text)) writes.add("external:notifications");
+  return [...writes].sort();
+}
+
+function inferAeonActions(text) {
+  const actions = [];
+  const patterns = [
+    ["external_api", /\b(curl|fetch|api|webhook|http|https)\b/i, false],
+    ["notify", /\b(notify|telegram|discord|slack|email|sendgrid)\b/i, false],
+    ["git_write", /\b(git push|create pr|open pr|open a pr|pull request|gh pr|gh issue)\b/i, true],
+    ["publish", /\b(npm publish|gh release create|post to|tweet|publish to|publish package)\b/i, true],
+    ["deploy", /\b(deploy|terraform apply|kubectl apply)\b/i, true],
+    ["onchain_write", /\b(send transaction|onchain write|wallet|private key|seed phrase|sign|deploy contract)\b/i, true],
+  ];
+  for (const [name, re, irreversible] of patterns) {
+    if (re.test(text)) actions.push({ name, irreversible });
+  }
+  return actions;
+}
+
+function scoreAeonRisk({ hosts, secrets, reads, writes, actions, text }) {
+  let score = 0;
+  score += Math.min(hosts.length, 5);
+  score += secrets.length * 3;
+  score += reads.length;
+  score += writes.length;
+  score += actions.filter((action) => action.irreversible).length * 3;
+  if (/\b(private key|seed phrase|wallet|oauth|token|secret)\b/i.test(text)) score += 3;
+  if (score >= 8) return "high";
+  if (score >= 3) return "medium";
+  return "low";
+}
+
+function printAeonPassport(item, opts = {}) {
+  console.log(`Skill: ${item.skill}`);
+  console.log(`Risk: ${item.risk}`);
+  console.log(`Secrets: ${item.secrets.length ? item.secrets.join(", ") : "none inferred"}`);
+  console.log(`Network: ${item.network.hosts.length ? item.network.hosts.join(", ") : "none inferred"}`);
+  console.log(`Reads: ${item.files.reads.length ? item.files.reads.join(", ") : "none inferred"}`);
+  console.log(`Writes: ${item.files.writes.length ? item.files.writes.join(", ") : "none inferred"}`);
+  console.log(`Actions: ${item.actions.length ? item.actions.join(", ") : "none inferred"}`);
+  console.log(`Irreversible: ${item.irreversible ? "yes" : "no"}`);
+  if (opts.detailed) {
+    console.log("");
+    console.log("Policy hints:");
+    console.log("- network hosts can become controls.network.allow proposals");
+    console.log("- write surfaces can become controls.files.write proposals");
+    console.log("- irreversible hints should pause for review");
+  }
 }
 
 function inferTraceChanges(policy) {
@@ -1282,15 +1745,15 @@ function inferTraceChanges(policy) {
     }
     if (trace.network && trace.network.status === "denied") {
       for (const host of trace.network.denied || []) {
-        if (!hostAllowed(host, policy.sandbox.network.allow)) {
-          changes.push(policyChange("loosen", "sandbox.network.allow", "add", host, "previous trace requested host"));
+        if (!hostAllowed(host, policy.controls.network.allow)) {
+          changes.push(policyChange("loosen", "controls.network.allow", "add", host, "previous trace requested host"));
         }
       }
     }
     if (trace.files && trace.files.status === "denied") {
       for (const match of trace.files.matches || []) {
-        if (!policy.sandbox.files.deny.includes(match)) {
-          changes.push(policyChange("tighten", "sandbox.files.deny", "add", match, "preserve denied file path from trace"));
+        if (!policy.controls.files.deny.includes(match)) {
+          changes.push(policyChange("tighten", "controls.files.deny", "add", match, "preserve denied file path from trace"));
         }
       }
     }
@@ -1373,7 +1836,7 @@ function printReceiptSummary(receipt, file) {
   console.log(`Verdict: ${receipt.verdict}`);
   console.log(`Runtime: ${receipt.meta && receipt.meta.runtime ? receipt.meta.runtime : "command"}`);
   if (receipt.meta && receipt.meta.skill) console.log(`Skill: ${receipt.meta.skill}`);
-  console.log(`Backend: ${receipt.backend}`);
+  console.log(`Runner: ${receipt.runner || "local"}`);
   console.log(`Policy: ${receipt.policyHash}`);
   console.log(`Exit: ${receipt.exitCode}`);
 }
@@ -1388,8 +1851,12 @@ function printTrace(receipt, file) {
   console.log(`Files: ${trace.files ? formatTracePart(trace.files) : "unknown"}`);
   console.log(`Network: ${trace.network ? formatTracePart(trace.network) : "unknown"}`);
   console.log(`Action: ${trace.action ? formatTracePart(trace.action) : "unknown"}`);
-  console.log(`Sandbox: ${trace.sandbox ? formatTracePart(trace.sandbox) : "unknown"}`);
+  console.log(`Execution: ${trace.execution ? formatTracePart(trace.execution) : "unknown"}`);
   console.log(`Output: ${trace.output ? formatTracePart(trace.output) : "unknown"}`);
+  if (Array.isArray(trace.explain) && trace.explain.length) {
+    console.log("Explain:");
+    for (const line of trace.explain) console.log(`- ${line}`);
+  }
   console.log(`Receipt: ${path.resolve(file)}`);
 }
 
@@ -1400,7 +1867,7 @@ function formatTracePart(part) {
     part.matches && part.matches.length ? part.matches.join(",") : "",
     part.denied && part.denied.length ? part.denied.join(",") : "",
     part.hosts && part.hosts.length && part.status !== "denied" ? part.hosts.join(",") : "",
-    part.backend || "",
+    part.runner || "",
     part.publicKey ? "pubkey" : "",
     part.redactions && part.redactions.length ? `${part.redactions.length} redaction(s)` : "",
   ].filter(Boolean).join(" ");
@@ -1430,21 +1897,14 @@ function receiptId(file) {
   return path.basename(file, ".json");
 }
 
-function assertMac() {
-  if (process.platform !== "darwin") throw new Error("Charon sandbox v1 is macOS-only.");
-}
-
 function assertAeonRepo() {
   if (!fs.existsSync("aeon.yml") || !fs.existsSync("skills")) {
     throw new Error("not inside an Aeon repo");
   }
 }
 
-function openshellStatus() {
-  if (!hasCommand("openshell")) return { ok: false, detail: "openshell not found" };
-  const result = childProcess.spawnSync("openshell", ["status"], { encoding: "utf8" });
-  const text = `${result.stdout || ""}${result.stderr || ""}`.trim();
-  return { ok: result.status === 0, detail: text || `exit ${result.status}` };
+function isAeonRepo() {
+  return fs.existsSync("aeon.yml") && fs.existsSync("skills");
 }
 
 function hasCommand(cmd) {
@@ -1454,20 +1914,6 @@ function hasCommand(cmd) {
 function commandPath(cmd) {
   const result = childProcess.spawnSync("sh", ["-lc", `command -v ${shellQuote(cmd)}`], { encoding: "utf8" });
   return result.status === 0 ? result.stdout.trim() : "";
-}
-
-function hasMkfsExt4() {
-  return Boolean(mkfsExt4Path());
-}
-
-function mkfsExt4Path() {
-  const candidates = [
-    "/opt/homebrew/opt/e2fsprogs/bin/mkfs.ext4",
-    "/opt/homebrew/opt/e2fsprogs/sbin/mkfs.ext4",
-    "/usr/local/opt/e2fsprogs/bin/mkfs.ext4",
-    "/usr/local/opt/e2fsprogs/sbin/mkfs.ext4",
-  ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) || commandPath("mkfs.ext4");
 }
 
 function ensureDir(dir) {
@@ -1645,6 +2091,6 @@ module.exports = {
   defaultPolicy,
   decideAction,
   validatePolicy,
-  compileOpenShell,
+  normalizePolicyForHash,
   scrubEnv,
 };

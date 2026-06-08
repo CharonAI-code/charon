@@ -1,0 +1,28 @@
+flowchart TB
+  A["<b>attempted action</b><br/><code>cat .env</code>"]
+  G["<b>Charon gate</b><br/>policy + hash + identity"]
+  V{"policy verdict"}
+
+  A -->|"request, not execution"| G --> V
+
+  subgraph OUT["outcomes"]
+    P["PASS<br/>execute"]
+    Q["PAUSE<br/>queue"]
+    D["DENY<br/>block"]
+  end
+
+  V --> P
+  V --> Q
+  V --> D
+
+  P --> M["machine boundary"]
+  P --> R["signed receipt"]
+  Q --> R
+  D --> R
+
+  classDef plain fill:#fff,stroke:#111,color:#111,stroke-width:1.5px;
+  classDef gate fill:#f7f7f7,stroke:#111,color:#111,stroke-width:1.8px;
+  classDef receipt fill:#fff,stroke:#555,color:#111,stroke-dasharray:6 5;
+  class A,V,P,Q,D,M plain;
+  class G gate;
+  class R receipt;

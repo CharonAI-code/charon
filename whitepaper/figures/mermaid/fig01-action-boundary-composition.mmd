@@ -1,0 +1,40 @@
+%%{init: {"theme": "base", "themeVariables": {"background": "#ffffff", "primaryColor": "#ffffff", "primaryBorderColor": "#111111", "primaryTextColor": "#111111", "clusterBkg": "#ffffff", "clusterBorder": "#777777", "lineColor": "#111111", "edgeLabelBackground": "#ffffff", "tertiaryColor": "#ffffff", "fontFamily": "Arial"}}}%%
+flowchart LR
+  subgraph A["AGENT RUNTIME"]
+    direction TB
+    M["<b>Model output</b><br/>intent as text"]
+    R["<code>cat .env</code><br/>requested action"]
+    M -->|"tool call formed"| R
+  end
+
+  subgraph G["Charon gate"]
+    direction TB
+    T["pre-execution check"]
+    P["<code>charon.yml</code>"]
+    H["<code>policy hash</code>"]
+    I["<code>identity</code>"]
+    T ~~~ P
+    P ~~~ H
+    H ~~~ I
+  end
+
+  PASS["<b>PASS</b>&nbsp;&nbsp;&nbsp; execute"]
+  PAUSE["<b>PAUSE</b>&nbsp;&nbsp;&nbsp; queue"]
+  DENY["<b>DENY</b>&nbsp;&nbsp;&nbsp; block"]
+  MACHINE["MACHINE"]
+  NO["NO SIDE EFFECT"]
+
+  R -->|"request only"| G
+  G --> PASS
+  G --> PAUSE
+  G --> DENY
+  PASS --> MACHINE
+  DENY -.-> NO
+
+  classDef white fill:#fff,stroke:#111,color:#111,stroke-width:1.7px;
+  classDef group fill:#fff,stroke:#777,color:#111,stroke-width:1.5px,stroke-dasharray:7 6;
+  classDef gate fill:#fff,stroke:#111,color:#111,stroke-width:2px;
+  classDef ghost fill:#fff,stroke:#fff,color:#555;
+  class M,R,P,H,I,PASS,PAUSE,DENY white;
+  class T ghost;
+  class MACHINE,NO ghost;

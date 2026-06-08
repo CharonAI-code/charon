@@ -2,246 +2,163 @@
 
 Charon is moving toward one core product:
 
-> A macOS security runtime for autonomous agents, powered by real sandboxing.
+> A local security layer for autonomous agents: policy, identity, approvals,
+> and verifiable receipts before actions touch the machine.
 
 The first product target is intentionally narrow:
 
-- macOS only
-- Aeon first
-- OpenShell-backed sandboxing from the start
-
-This keeps Charon focused enough to ship while still building on serious
-runtime isolation instead of prompt-level guardrails.
+- local-first CLI
+- Aeon-first integration
+- programmable policy
+- signed receipts
+- no hosted service required
 
 ## Product Shape
 
 The user experience should feel like this:
 
 ```bash
-charon init
-charon run -- <agent command>
+charon setup
+charon gate -- <agent command>
 ```
 
 For Aeon:
 
 ```bash
 charon aeon init
-charon aeon run <skill>
+charon aeon enable
 ```
 
-Charon owns the agent-facing UX. OpenShell provides the hardened sandbox
-backend.
+After that, Aeon actions can be routed through Charon without users manually
+remembering a long command flow.
 
-## Why OpenShell
+## Phase 1: Local Gate
 
-OpenShell is the strongest starting point because it is already built for
-agent sandboxes instead of generic app sandboxing.
-
-Charon should not fork OpenShell or pretend to replace it. Charon should sit
-above it as the agent-specific product layer:
-
-- simple agent policy
-- Aeon-aware defaults
-- OpenShell policy generation
-- sandbox launch
-- receipts
-- verification
-- clean developer UX
-
-OpenShell handles the low-level runtime work. Charon makes it usable for Aeon
-users and later for other agent runtimes.
-
-## Phase 1: macOS Bootstrap
-
-Goal: make Charon able to detect and prepare a macOS sandbox environment.
+Goal: put Charon in front of agent actions.
 
 Ship:
 
-- macOS-only platform gate
-- `charon doctor`
-- OpenShell detection
-- Docker Desktop detection
-- OpenShell gateway status check
-- clear install guidance when OpenShell is missing
-- clean failure when the machine cannot run the backend
+- `charon.yml`
+- PASS / PAUSE / DENY decisions
+- command preflight
+- environment scrubbing
+- denied file and secret patterns
+- local command runner
 
 Done when:
 
-- Charon can say whether the current Mac is ready
-- missing dependencies produce one obvious next step
-- only macOS paths appear in the product flow
+- safe commands execute
+- denied commands never launch
+- paused commands enter a review queue
 
-## Phase 2: Charon Policy v1
+## Phase 2: Receipts
 
-Goal: define the smallest useful policy Charon can compile into OpenShell.
-
-Ship:
-
-- `charon.yml` schema
-- file read/write scope
-- denied paths
-- allowed network hosts
-- denied commands
-- exposed and denied environment variable names
-- strict default policy
-- policy validation
-
-Example:
-
-```yaml
-sandbox:
-  files:
-    read:
-      - .
-    write:
-      - reports/**
-    deny:
-      - .env
-      - ~/.ssh/**
-      - ~/.aws/**
-  network:
-    allow:
-      - github.com
-      - api.github.com
-  commands:
-    deny:
-      - git push
-      - npm publish
-      - rm -rf
-  env:
-    expose:
-      - GITHUB_TOKEN
-    deny:
-      - ANTHROPIC_API_KEY
-      - CLAUDE_CODE_OAUTH_TOKEN
-```
-
-Done when:
-
-- `charon init` writes a useful default policy
-- invalid policy fails before execution
-- policy never stores secret values
-- policy is simple enough for normal builders to edit
-
-## Phase 3: OpenShell Compiler
-
-Goal: turn `charon.yml` into OpenShell runtime configuration.
+Goal: make every decision inspectable.
 
 Ship:
 
-- policy-to-OpenShell renderer
-- generated sandbox name
-- generated policy hash
-- mapped file scopes
-- mapped network allowlist
-- mapped environment exposure rules
-- temporary generated OpenShell config
-- `charon compile` for inspection
-
-Done when:
-
-- `charon compile` shows what will be sent to OpenShell
-- the generated config is deterministic
-- policy hash changes when sandbox-relevant policy changes
-
-## Phase 4: Sandboxed Runner
-
-Goal: run a command through Charon using OpenShell on macOS.
-
-Ship:
-
-- `charon run -- <command>`
-- OpenShell sandbox creation
-- command launch inside sandbox
-- env scrubbing before launch
-- blocked command preflight for obvious irreversible actions
-- exit code propagation
-- local receipt for every run
-
-Done when:
-
-- allowed commands run inside OpenShell
-- denied paths are not reachable from the sandbox
-- denied network targets are blocked by the sandbox policy
-- receipts show backend, command, policy hash, start/end time, and exit code
-
-## Phase 5: Aeon Local Product
-
-Goal: make Aeon the first native Charon use case.
-
-Ship:
-
-- `charon aeon init`
-- Aeon repo detection
-- Aeon skill detection
-- skill-aware default policy
-- `charon aeon run <skill>`
-- receipts tagged with Aeon skill name
-- clean migration from existing Charon Aeon guardrails to sandbox mode
-
-Done when:
-
-- an Aeon skill can run locally on macOS through OpenShell
-- common sensitive paths are blocked
-- the receipt clearly says which Aeon skill ran
-- the user does not need to understand OpenShell commands
-
-## Phase 6: Receipts and Verify
-
-Goal: make every sandboxed agent run inspectable.
-
-Ship:
-
-- receipt schema v1
+- receipt schema
 - policy hash
-- backend name and version
-- generated sandbox/config hash
 - command and cwd
+- runtime tag
 - exposed env names, never values
 - denied env names
 - start/end time
 - exit code
 - `charon receipts`
-- `charon verify <receipt>`
+- `charon verify`
 
 Done when:
 
-- receipts are useful without being noisy
-- no secret values are stored
+- every gate action leaves evidence
+- secret values are redacted
 - tampered receipts fail verification
 
-## Phase 7: Public MVP
+## Phase 3: Signed Agent Identity
 
-Goal: ship a clean public product.
+Goal: prove which local agent identity made the request.
 
 Ship:
 
-- one root CLI package
-- public README focused on macOS + Aeon
-- no internal phase/test commands in public docs
-- install path that works from a fresh machine
-- demo script that proves denied file/network behavior
+- local key generation
+- identity document
+- receipt signatures
+- identity verification
+- adapter identity fields
 
 Done when:
 
-- a new macOS user can run Charon from the README
-- Aeon users understand why Charon exists in under a minute
-- the demo shows real sandbox containment
-- the repo looks like a product, not a build log
+- receipts can prove they came from the local Charon identity
+- identity mismatch is visible during verification
+
+## Phase 4: Aeon Integration
+
+Goal: make Charon useful for Aeon users without extra ceremony.
+
+Ship:
+
+- Aeon repo detection
+- skill detection
+- `charon aeon init`
+- `charon aeon enable`
+- skill-tagged receipts
+- Aeon wrapper script
+
+Done when:
+
+- Aeon skills can be associated with Charon receipts
+- users can enable Charon once per repo
+- Charon policy lives beside the Aeon workspace
+
+## Phase 5: Policy UX
+
+Goal: make policy setup less technical.
+
+Ship:
+
+- `charon setup`
+- `charon status`
+- `charon selftest`
+- policy generation from local repo context
+- clear queue approval flow
+- safer defaults for release, publish, secrets, and destructive commands
+
+Done when:
+
+- a new user can set up Charon in minutes
+- status explains what is protected
+- selftest proves the local gate works
+
+## Phase 6: Agent Adapters
+
+Goal: make Charon usable outside a single agent runtime.
+
+Ship:
+
+- Aeon adapter
+- Codex adapter
+- Claude adapter
+- stable SDK API
+- shared receipt format
+
+Done when:
+
+- adapters can call the same Charon policy engine
+- product remains one core security layer, not separate wrappers
 
 ## MVP Definition
 
 MVP means:
 
-- macOS only
-- OpenShell backend
-- `charon init`
-- `charon doctor`
-- `charon run -- <command>`
+- `charon setup`
+- `charon gate -- <command>`
 - `charon aeon init`
-- `charon aeon run <skill>`
-- receipts
-- clean public docs
+- `charon aeon enable`
+- PASS / PAUSE / DENY
+- signed receipts
+- receipt verification
+- local queue
+- clean public install flow
 
-That is enough to prove Charon as a real sandbox product for autonomous
-agents.
+That is enough to prove Charon as useful agent security infrastructure without
+requiring hosted infra, tokens, payments, or a separate runtime dependency.

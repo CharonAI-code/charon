@@ -1,0 +1,64 @@
+direction: right
+
+vars: {
+  d2-config: {
+    theme-id: 0
+    sketch: false
+    layout-engine: dagre
+  }
+}
+
+agent: {
+  label: "AGENT RUNTIME"
+  style.stroke-dash: 6
+  style.stroke: "#666666"
+
+  model: {
+    label: "Model output\nintent as text"
+    shape: rectangle
+  }
+
+  request: {
+    label: "cat .env\nrequested action"
+    shape: rectangle
+  }
+
+  model -> request: "tool call formed"
+}
+
+gate: {
+  label: "CHARON GATE\npre-execution check"
+  style.stroke: "#111111"
+
+  policy: "charon.yml\npolicy rules"
+  hash: "policy hash\ndeterministic binding"
+  identity: "identity\nlocal signer"
+
+  policy -> hash: ""
+  hash -> identity: ""
+}
+
+verdict: {
+  label: "verdict"
+  shape: diamond
+}
+
+pass: "PASS\nexecute"
+pause: "PAUSE\nqueue review"
+deny: "DENY\nblock before launch"
+machine: "MACHINE BOUNDARY\nOS / tool / file / network / secret"
+receipt: {
+  label: "signed receipt\naction + verdict + policy hash + identity proof"
+  style.stroke-dash: 5
+}
+
+agent.request -> verdict: "requested action only"
+gate.policy -> verdict: "evaluate"
+verdict -> pass: "inside policy"
+verdict -> pause: "reviewable risk"
+verdict -> deny: "policy violation"
+pass -> machine: "launch"
+pass -> receipt: "record result"
+pause -> receipt: "no launch"
+deny -> receipt: "no launch"
+

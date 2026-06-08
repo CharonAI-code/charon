@@ -1,7 +1,7 @@
 {
   "name": "charon",
   "version": "0.2.0",
-  "description": "Local action gate and sandbox runtime for autonomous agents",
+  "description": "Local policy gate and receipts for autonomous agents",
   "license": "MIT",
   "author": "CharonAI-code",
   "type": "commonjs",
@@ -19,7 +19,6 @@
     "bin",
     "lib",
     "src",
-    "scripts",
     "README.md",
     "ROADMAP.md",
     "LICENSE"
@@ -45,11 +44,10 @@
   "keywords": [
     "agents",
     "aeon",
-    "sandbox",
     "gate",
     "agent-security",
-    "openshell",
-    "macos",
+    "policy",
+    "receipts",
     "security"
   ]
 }

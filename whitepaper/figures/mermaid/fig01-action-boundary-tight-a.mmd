@@ -1,0 +1,24 @@
+flowchart LR
+  A["<b>agent runtime</b><br/><code>cat .env</code><br/>requested action"]
+  G["<b>Charon gate</b><br/><code>charon.yml</code> + policy hash + identity"]
+  V{"verdict"}
+  P["<b>PASS</b><br/>execute"]
+  Q["<b>PAUSE</b><br/>queue"]
+  D["<b>DENY</b><br/>block"]
+  M["<b>machine boundary</b><br/>OS / tool / file / network / secret"]
+  R["<b>signed receipt</b><br/>action + verdict + policy hash + identity proof"]
+
+  A -->|"request only"| G
+  G --> V
+  V -->|"inside policy"| P -->|"launch"| M
+  V -->|"reviewable"| Q -->|"no launch"| R
+  V -->|"violation"| D -->|"no launch"| R
+  P -->|"record"| R
+
+  classDef plain fill:#fff,stroke:#111,color:#111,stroke-width:1.6px;
+  classDef gate fill:#f8f8f8,stroke:#111,color:#111,stroke-width:1.8px;
+  classDef receipt fill:#fff,stroke:#555,color:#111,stroke-width:1.3px,stroke-dasharray:6 5;
+  class A,V,P,Q,D,M plain;
+  class G gate;
+  class R receipt;
+

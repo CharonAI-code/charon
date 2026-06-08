@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760">
+  <defs>
+    <marker id="arrow" markerWidth="16" markerHeight="16" refX="13" refY="8" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L14,8 L2,14 Z" fill="#4f4f4f"/>
+    </marker>
+    <style>
+      .title { font: 700 34px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; fill: #1f1f1f; }
+      .label { font: 700 28px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; fill: #242424; }
+      .sub { font: 400 23px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; fill: #616161; }
+      .mini { font: 600 17px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; fill: #6b6b6b; letter-spacing: .03em; }
+      .tiny { font: 500 16px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; fill: #6b6b6b; }
+      .code { font: 600 20px "SFMono-Regular", Menlo, Consolas, monospace; fill: #282828; }
+      .box { stroke-width: 2.5; rx: 16; }
+      .dash { stroke: #8e8e8e; stroke-width: 2.3; stroke-dasharray: 10 10; fill: none; rx: 18; }
+      .arrow { stroke: #4f4f4f; stroke-width: 3.5; fill: none; marker-end: url(#arrow); }
+      .thin { stroke: #6a6a6a; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1400" height="760" fill="#ffffff"/>
+
+  <text x="700" y="74" text-anchor="middle" class="title">Charon sits at the action boundary</text>
+  <text x="700" y="112" text-anchor="middle" class="sub">The agent can request an action. Charon decides whether that request may touch the machine.</text>
+
+  <rect x="58" y="178" width="394" height="402" class="dash"/>
+  <text x="86" y="220" class="mini">AGENT RUNTIME</text>
+
+  <rect x="96" y="268" width="318" height="128" rx="16" fill="#eef4ff" stroke="#1f74ff" class="box"/>
+  <text x="255" y="317" text-anchor="middle" class="label">Model output</text>
+  <text x="255" y="354" text-anchor="middle" class="sub">intent expressed as text</text>
+
+  <rect x="96" y="432" width="318" height="98" rx="16" fill="#f7f7f7" stroke="#b8b8b8" class="box"/>
+  <text x="255" y="472" text-anchor="middle" class="code">cat .env</text>
+  <text x="255" y="505" text-anchor="middle" class="sub">requested action</text>
+
+  <path d="M255 396 L255 426" class="thin"/>
+  <text x="286" y="418" class="tiny">tool call formed</text>
+
+  <path d="M414 481 C470 481, 496 481, 546 481" class="arrow"/>
+  <text x="479" y="454" text-anchor="middle" class="tiny">request only</text>
+
+  <rect x="546" y="202" width="308" height="360" rx="18" fill="#fffaf0" stroke="#dd9300" class="box"/>
+  <text x="700" y="250" text-anchor="middle" class="label">Charon gate</text>
+  <text x="700" y="286" text-anchor="middle" class="sub">pre-execution check</text>
+
+  <rect x="594" y="326" width="212" height="58" rx="12" fill="#ffffff" stroke="#c9c9c9" stroke-width="2"/>
+  <text x="700" y="362" text-anchor="middle" class="code">charon.yml</text>
+
+  <rect x="594" y="406" width="212" height="58" rx="12" fill="#ffffff" stroke="#c9c9c9" stroke-width="2"/>
+  <text x="700" y="442" text-anchor="middle" class="code">policy hash</text>
+
+  <rect x="594" y="486" width="212" height="58" rx="12" fill="#ffffff" stroke="#c9c9c9" stroke-width="2"/>
+  <text x="700" y="522" text-anchor="middle" class="code">identity</text>
+
+  <path d="M854 382 C906 382, 938 326, 994 326" class="arrow"/>
+  <path d="M854 382 C910 382, 938 382, 994 382" class="arrow"/>
+  <path d="M854 382 C906 382, 938 438, 994 438" class="arrow"/>
+
+  <rect x="988" y="278" width="292" height="72" rx="14" fill="#e9f7ef" stroke="#10a65a" class="box"/>
+  <text x="1024" y="323" class="label">PASS</text>
+  <text x="1124" y="323" class="sub">execute</text>
+
+  <rect x="988" y="360" width="292" height="72" rx="14" fill="#fff1d6" stroke="#dd9300" class="box"/>
+  <text x="1024" y="405" class="label">PAUSE</text>
+  <text x="1136" y="405" class="sub">queue</text>
+
+  <rect x="988" y="442" width="292" height="72" rx="14" fill="#fde9e9" stroke="#df3c3c" class="box"/>
+  <text x="1024" y="487" class="label">DENY</text>
+  <text x="1124" y="487" class="sub">block</text>
+
+  <path d="M1280 314 C1314 314, 1324 314, 1348 314" class="arrow"/>
+  <path d="M1280 478 C1310 478, 1324 478, 1348 478" class="thin" style="marker-end:none; stroke-dasharray: 8 8;"/>
+
+  <text x="1324" y="285" text-anchor="middle" class="mini">MACHINE</text>
+  <text x="1324" y="532" text-anchor="middle" class="mini">NO SIDE EFFECT</text>
+
+  <rect x="150" y="626" width="1100" height="76" rx="14" fill="#f8f8f8" stroke="#d0d0d0" stroke-width="2"/>
+  <text x="180" y="671" class="label">Key property:</text>
+  <text x="390" y="671" class="sub">Requested actions are checked before OS, tool, file, network, or secret side effects.</text>
+</svg>

@@ -1,0 +1,21 @@
+%%{init: {"theme": "base", "themeVariables": {"background": "#ffffff", "primaryColor": "#ffffff", "primaryBorderColor": "#111111", "primaryTextColor": "#111111", "clusterBkg": "#ffffff", "clusterBorder": "#777777", "lineColor": "#111111", "edgeLabelBackground": "#ffffff", "tertiaryColor": "#ffffff", "fontFamily": "Arial"}}}%%
+flowchart LR
+  U["<b>untrusted inputs</b><br/>web · docs · chats<br/>tool descriptions · retrieved files"]
+  M["<b>agent model</b><br/>plans from mixed context"]
+  A["<b>attempted action</b><br/>command · file · env · network · tool"]
+  C["<b>Charon boundary</b><br/>policy before side effect"]
+  S["<b>side-effect surfaces</b><br/>OS · files · secrets<br/>network · tools / APIs"]
+  R["<b>signed receipt</b><br/>all verdicts recorded"]
+
+  U -->|"influences"| M
+  M -->|"requests"| A
+  A -->|"must cross"| C
+  C -->|"PASS only"| S
+  C -.->|"PASS / PAUSE / DENY"| R
+
+  classDef plain fill:#fff,stroke:#111,color:#111,stroke-width:1.7px;
+  classDef boundary fill:#f7f7f7,stroke:#111,color:#111,stroke-width:2px;
+  classDef receipt fill:#fff,stroke:#555,color:#111,stroke-dasharray:7 6;
+  class U,M,A,S plain;
+  class C boundary;
+  class R receipt;
