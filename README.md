@@ -59,6 +59,20 @@ charon trace latest
 charon verify latest
 ```
 
+## MCP Proxy
+
+Run an MCP server behind Charon:
+
+```bash
+charon mcp proxy -- <mcp-server-command>
+```
+
+The proxy passes normal MCP traffic through, intercepts `tools/call`, evaluates
+the requested tool call as a typed Charon action, and only forwards it to the
+upstream MCP server on `PASS`.
+
+`DENY` and `PAUSE` return an MCP tool error result and write a receipt.
+
 ## What Charon Enforces
 
 Charon evaluates actions before they reach the machine:
@@ -146,6 +160,7 @@ charon reject <id>
 charon receipts [list|latest|inspect <id|latest>]
 charon trace <id|latest>
 charon verify <receipt|latest>
+charon mcp proxy -- <mcp-server-command>
 charon status
 ```
 

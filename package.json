@@ -13,6 +13,7 @@
     "./adapters/claude": "./dist/src/adapters/claude.js",
     "./adapters/codex": "./dist/src/adapters/codex.js",
     "./core/policy": "./dist/src/core/policy/index.js",
+    "./mcp": "./dist/src/mcp/index.js",
     "./roles": "./dist/src/roles/index.js",
     "./trusted-process": "./dist/src/trusted-process/index.js"
   },

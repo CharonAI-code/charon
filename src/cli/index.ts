@@ -12,6 +12,7 @@ const normalizationCore = require("../core/normalization");
 const { createActionRequest } = require("../action");
 const { ActionCoordinator } = require("../trusted-process/coordinator");
 const { createTrustedReceipt, verifyTrustedReceipt } = require("../trusted-process/receipt");
+const { startMcpProxy } = require("../mcp");
 
 const VERSION = "0.2.0";
 const CONFIG = "charon.yml";
@@ -80,6 +81,8 @@ async function main(argv) {
       return receiptsCommand(args);
     case "verify":
       return verifyCommand(args);
+    case "mcp":
+      return mcpCommand(args);
     case "aeon":
       return legacyAeonCommand(args);
     case "--version":
@@ -123,9 +126,23 @@ Usage:
   charon run -- <command>
   charon receipts [list|latest|inspect <id|latest>]
   charon verify <receipt|latest>
+  charon mcp proxy -- <mcp-server-command>
 
 Runtime policy enforcement for autonomous agents.
 `);
+}
+
+function mcpCommand(args) {
+  const [sub, ...rest] = args;
+  if (sub !== "proxy") throw new Error("usage: charon mcp proxy -- <mcp-server-command>");
+  const sep = rest.indexOf("--");
+  const command = sep >= 0 ? rest.slice(sep + 1) : rest;
+  if (!command.length) throw new Error("usage: charon mcp proxy -- <mcp-server-command>");
+  startMcpProxy({
+    command: command[0],
+    args: command.slice(1),
+    cwd: process.cwd(),
+  });
 }
 
 function init(args) {

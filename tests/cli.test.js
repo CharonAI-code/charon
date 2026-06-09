@@ -29,6 +29,34 @@ function run(args, opts = {}) {
   });
 }
 
+function waitForLine(stream, matcher, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`timed out waiting for ${matcher}`));
+    }, timeoutMs);
+    const onData = (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split(/\n/);
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        if (!matcher || matcher(line)) {
+          cleanup();
+          resolve(line);
+          return;
+        }
+      }
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      stream.off("data", onData);
+    };
+    stream.on("data", onData);
+  });
+}
+
 test("init creates default policy", () => {
   const cwd = tmpdir();
   const result = run(["init"], { cwd });
@@ -429,6 +457,63 @@ test("trusted coordinator audit stores redacted enforcement action", async () =>
   const audit = fs.readFileSync(auditPath, "utf8");
   assert.doesNotMatch(audit, new RegExp(secret));
   assert.match(audit, /REDACTED:secret/);
+});
+
+test("mcp proxy blocks denied tool calls and forwards allowed calls", async () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const policy = yaml.load(fs.readFileSync(path.join(cwd, "charon.yml"), "utf8"));
+  policy.bounds.rules = [
+    { id: "mcp.safe", verdict: "PASS", role: "mcp-tool", equals: "safe.echo" },
+    { id: "mcp.secret", verdict: "DENY", role: "secret" },
+  ];
+  fs.writeFileSync(path.join(cwd, "charon.yml"), yaml.dump(policy));
+  const upstream = path.join(cwd, "fake-mcp.js");
+  fs.writeFileSync(upstream, `
+process.stdin.setEncoding("utf8");
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const msg = JSON.parse(line);
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: { content: [{ type: "text", text: "upstream:" + msg.params.name }] }
+    }) + "\\n");
+  }
+});
+`);
+  const proxy = childProcess.spawn(process.execPath, [CLI, "mcp", "proxy", "--", process.execPath, upstream], {
+    cwd,
+    env: { ...process.env, CHARON_SKIP_GLOBAL_INSTALL: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  proxy.stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name: "filesystem.read", arguments: { path: ".env" } },
+  })}\n`);
+  const denied = JSON.parse(await waitForLine(proxy.stdout, (line) => line.includes("Charon DENY")));
+  assert.equal(denied.result.isError, true);
+  assert.match(denied.result.content[0].text, /Receipt:/);
+
+  proxy.stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "safe.echo", arguments: { text: "ok" } },
+  })}\n`);
+  const allowed = JSON.parse(await waitForLine(proxy.stdout, (line) => line.includes("upstream:safe.echo")));
+  assert.equal(allowed.result.content[0].text, "upstream:safe.echo");
+  assert.ok(fs.readdirSync(path.join(cwd, ".charon", "receipts")).some((file) => file.endsWith(".json")));
+
+  proxy.kill();
 });
 
 test.skip("legacy aeon runtime adapter gates tool calls", () => {});
