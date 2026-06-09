@@ -516,6 +516,42 @@ process.stdin.on("data", (chunk) => {
   proxy.kill();
 });
 
+test("mcp config prints wrapped server config", () => {
+  const result = run(["mcp", "config", "files", "--", "node", "server.js"], { cwd: tmpdir() });
+  assert.equal(result.status, 0, result.stderr);
+  const config = JSON.parse(result.stdout);
+  assert.deepEqual(config.mcpServers.files, {
+    command: "charon",
+    args: ["mcp", "proxy", "--", "node", "server.js"],
+  });
+});
+
+test("mcp proxy fails closed on malformed and invalid tool calls", async () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const upstream = path.join(cwd, "fake-mcp.js");
+  fs.writeFileSync(upstream, `
+process.stdin.resume();
+`);
+  const proxy = childProcess.spawn(process.execPath, [CLI, "mcp", "proxy", "--", process.execPath, upstream], {
+    cwd,
+    env: { ...process.env, CHARON_SKIP_GLOBAL_INSTALL: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  try {
+    proxy.stdin.write("{nope\n");
+    const parseError = JSON.parse(await waitForLine(proxy.stdout, (line) => line.includes("Parse error")));
+    assert.equal(parseError.error.code, -32700);
+
+    proxy.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/call", params: {} })}\n`);
+    const invalid = JSON.parse(await waitForLine(proxy.stdout, (line) => line.includes("Invalid MCP tools/call params")));
+    assert.equal(invalid.error.code, -32602);
+  } finally {
+    proxy.kill();
+  }
+});
+
 test.skip("legacy aeon runtime adapter gates tool calls", () => {});
 
 test("paused command enters local queue and can be rejected", () => {

@@ -126,6 +126,7 @@ Usage:
   charon run -- <command>
   charon receipts [list|latest|inspect <id|latest>]
   charon verify <receipt|latest>
+  charon mcp config <name> -- <mcp-server-command>
   charon mcp proxy -- <mcp-server-command>
 
 Runtime policy enforcement for autonomous agents.
@@ -134,7 +135,8 @@ Runtime policy enforcement for autonomous agents.
 
 function mcpCommand(args) {
   const [sub, ...rest] = args;
-  if (sub !== "proxy") throw new Error("usage: charon mcp proxy -- <mcp-server-command>");
+  if (sub === "config") return mcpConfigCommand(rest);
+  if (sub !== "proxy") throw new Error("usage: charon mcp config <name> -- <mcp-server-command> | charon mcp proxy -- <mcp-server-command>");
   const sep = rest.indexOf("--");
   const command = sep >= 0 ? rest.slice(sep + 1) : rest;
   if (!command.length) throw new Error("usage: charon mcp proxy -- <mcp-server-command>");
@@ -143,6 +145,24 @@ function mcpCommand(args) {
     args: command.slice(1),
     cwd: process.cwd(),
   });
+}
+
+function mcpConfigCommand(args) {
+  const sep = args.indexOf("--");
+  const name = args[0];
+  const command = sep >= 0 ? args.slice(sep + 1) : [];
+  if (!name || name.startsWith("-") || !command.length) {
+    throw new Error("usage: charon mcp config <name> -- <mcp-server-command>");
+  }
+  const config = {
+    mcpServers: {
+      [name]: {
+        command: "charon",
+        args: ["mcp", "proxy", "--", ...command],
+      },
+    },
+  };
+  console.log(JSON.stringify(config, null, 2));
 }
 
 function init(args) {

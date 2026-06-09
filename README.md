@@ -67,11 +67,18 @@ Run an MCP server behind Charon:
 charon mcp proxy -- <mcp-server-command>
 ```
 
+Generate a pasteable MCP config snippet:
+
+```bash
+charon mcp config files -- node server.js
+```
+
 The proxy passes normal MCP traffic through, intercepts `tools/call`, evaluates
 the requested tool call as a typed Charon action, and only forwards it to the
 upstream MCP server on `PASS`.
 
 `DENY` and `PAUSE` return an MCP tool error result and write a receipt.
+Malformed tool-call requests fail closed.
 
 ## What Charon Enforces
 
@@ -160,6 +167,7 @@ charon reject <id>
 charon receipts [list|latest|inspect <id|latest>]
 charon trace <id|latest>
 charon verify <receipt|latest>
+charon mcp config <name> -- <mcp-server-command>
 charon mcp proxy -- <mcp-server-command>
 charon status
 ```
