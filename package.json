@@ -1,0 +1,62 @@
+{
+  "name": "charon",
+  "version": "0.2.0",
+  "description": "Runtime policy enforcement for autonomous agents",
+  "license": "MIT",
+  "author": "CharonAI-code",
+  "type": "commonjs",
+  "main": "dist/src/cli/index.js",
+  "types": "dist/src/cli/index.d.ts",
+  "exports": {
+    ".": "./dist/src/cli/index.js",
+    "./action": "./dist/src/action/index.js",
+    "./adapters/claude": "./dist/src/adapters/claude.js",
+    "./adapters/codex": "./dist/src/adapters/codex.js",
+    "./core/policy": "./dist/src/core/policy/index.js",
+    "./roles": "./dist/src/roles/index.js",
+    "./trusted-process": "./dist/src/trusted-process/index.js"
+  },
+  "bin": {
+    "charon": "bin/charon.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "ROADMAP.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "smoke": "node bin/charon.js --help",
+    "test": "npm run build && node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CharonAI-code/charon.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CharonAI-code/charon/issues"
+  },
+  "homepage": "https://github.com/CharonAI-code/charon#readme",
+  "keywords": [
+    "agents",
+    "gate",
+    "agent-security",
+    "policy",
+    "receipts",
+    "security"
+  ]
+}
