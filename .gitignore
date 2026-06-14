@@ -7,3 +7,6 @@ __pycache__/
 .charon/
 charon.yml
 charon.generated.yml
+.next/
+out/
+*.tsbuildinfo

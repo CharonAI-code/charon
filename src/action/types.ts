@@ -1,4 +1,5 @@
 import type { ResourceRole } from "../roles";
+import type { InspectionFinding } from "../inspection/types";
 
 export type ActionVerdict = "PASS" | "PAUSE" | "DENY";
 
@@ -32,6 +33,7 @@ export interface ActionDecision {
   reason: string;
   ruleId: string;
   resources: ActionResource[];
+  findings?: InspectionFinding[];
 }
 
 export interface RawToolCall {
@@ -45,4 +47,3 @@ export interface RawToolCall {
   context?: string;
   metadata?: Record<string, unknown>;
 }
-

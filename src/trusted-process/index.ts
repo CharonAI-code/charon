@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ActionRequest, RawToolCall } from "../action";
 import type { PolicyDecision, RuntimePolicy, ToolCallRequest } from "../core/policy";
-import { evaluateToolCall } from "../core/policy";
+import { normalizeResources } from "../core/policy";
+import { createActionRequest } from "../action";
+import { InspectionSession } from "../inspection";
 import { AuditLog } from "./audit-log";
 import { ActionCoordinator, type CoordinatorExecutor } from "./coordinator";
 import type { TrustedReceipt, TrustedReceiptSigner } from "./receipt";
@@ -10,6 +12,7 @@ export interface TrustedProcessOptions {
   policy?: RuntimePolicy;
   auditPath?: string;
   signer?: TrustedReceiptSigner;
+  session?: InspectionSession;
 }
 
 export interface TrustedExecutionResult<T = unknown> {
@@ -32,11 +35,20 @@ export class TrustedProcess {
       policy: options.policy,
       audit: this.audit,
       signer: options.signer,
+      session: options.session,
     });
   }
 
   evaluate(request: ToolCallRequest): PolicyDecision {
-    const decision = evaluateToolCall(request, this.options.policy);
+    const decision = this.coordinator.evaluate(createActionRequest({
+      id: request.id,
+      runtime: request.runtime,
+      toolName: request.toolName,
+      args: request.args,
+      cwd: request.cwd,
+      resources: normalizeResources(request),
+      context: request.context,
+    })).decision;
     this.audit?.append({
       id: request.id || cryptoRandomId(),
       time: new Date().toISOString(),

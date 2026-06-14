@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createActionRequest, type ActionRequest, type RawToolCall } from "../action";
 import type { PolicyDecision, RuntimePolicy } from "../core/policy";
 import { evaluateAction } from "../core/policy";
+import { applyInspectionToDecision, inspectInput, InspectionSession } from "../inspection";
 import { AuditLog } from "./audit-log";
 import { createTrustedReceipt, type TrustedReceipt, type TrustedReceiptSigner } from "./receipt";
 
@@ -11,6 +12,7 @@ export interface ActionCoordinatorOptions {
   policy?: RuntimePolicy;
   audit?: AuditLog;
   signer?: TrustedReceiptSigner;
+  session?: InspectionSession;
 }
 
 export interface CoordinatedAction<T = unknown> {
@@ -27,7 +29,8 @@ export class ActionCoordinator {
 
   evaluate(input: RawToolCall | ActionRequest): CoordinatedAction {
     const action = normalizeCoordinatorInput(input);
-    const decision = evaluateAction(action, this.options.policy);
+    const report = inspectInput(action, { session: this.options.session });
+    const decision = applyInspectionToDecision(evaluateAction(action, this.options.policy), report, this.options.policy);
     const id = randomUUID();
     const createdAt = new Date().toISOString();
     const receipt = createTrustedReceipt({
@@ -44,7 +47,8 @@ export class ActionCoordinator {
 
   async enforce<T = unknown>(input: RawToolCall | ActionRequest, executor?: CoordinatorExecutor<T>): Promise<CoordinatedAction<T>> {
     const action = normalizeCoordinatorInput(input);
-    const decision = evaluateAction(action, this.options.policy);
+    const report = inspectInput(action, { session: this.options.session });
+    const decision = applyInspectionToDecision(evaluateAction(action, this.options.policy), report, this.options.policy);
     const id = randomUUID();
     const createdAt = new Date().toISOString();
 

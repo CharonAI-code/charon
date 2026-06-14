@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import { ActionCoordinator } from "../trusted-process";
+import { inspectOutput, InspectionSession } from "../inspection";
 import { loadMcpPolicy } from "./policy";
 import { writeMcpReceipt } from "./receipts";
 
@@ -28,12 +29,15 @@ export function startMcpProxy(options: McpProxyOptions): ChildProcessWithoutNull
   const stdin = options.stdin || process.stdin;
   const stderr = options.stderr || process.stderr;
   let upstreamReady = true;
+  const session = new InspectionSession();
   const child = spawn(options.command, options.args || [], {
     cwd,
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const coordinator = new ActionCoordinator({ policy: loadMcpPolicy(options.policyPath || "charon.yml") });
+  const policy = loadMcpPolicy(options.policyPath || "charon.yml");
+  const coordinator = new ActionCoordinator({ policy, session });
+  const pendingCalls = new Map<string | number, string>();
 
   child.stderr.on("data", (chunk) => stderr.write(chunk));
   child.on("error", (error) => {
@@ -90,6 +94,7 @@ export function startMcpProxy(options: McpProxyOptions): ChildProcessWithoutNull
     }
 
     if (result.decision.verdict === "PASS") {
+      pendingCalls.set(message.id ?? `id-${Math.random()}`, toolName);
       forwardToUpstream(child, line, stdout, message);
       return;
     }
@@ -98,7 +103,29 @@ export function startMcpProxy(options: McpProxyOptions): ChildProcessWithoutNull
   });
 
   server.on("line", (line) => {
-    stdout.write(`${line}\n`);
+    const message = parseJson(line);
+    if (!message || message.id === undefined || !pendingCalls.has(message.id)) {
+      stdout.write(`${line}\n`);
+      return;
+    }
+    pendingCalls.delete(message.id);
+    const content = extractToolText(message);
+    if (!content) {
+      stdout.write(`${line}\n`);
+      return;
+    }
+    const output = inspectOutput(content, "", {
+      session,
+      mode: "deny",
+      store: "redacted",
+      maxBytes: 4000,
+    });
+    if (output.verdict !== "PASS") {
+      stdout.write(`${JSON.stringify(blockedToolResult(message, output.verdict, output.reason, ""))}\n`);
+      return;
+    }
+    const redacted = replaceToolText(message, output.combined || content);
+    stdout.write(`${JSON.stringify(redacted)}\n`);
   });
 
   stdin.on("end", () => child.stdin.end());
@@ -151,4 +178,30 @@ function blockedToolResult(request: JsonRpcRequest, verdict: string, reason: str
       isError: true,
     },
   };
+}
+
+function extractToolText(message: JsonRpcRequest): string {
+  const content = Array.isArray(message.params?.content)
+    ? message.params.content
+    : Array.isArray((message as any).result?.content)
+      ? (message as any).result.content
+      : [];
+  return content
+    .filter((item: any) => item && item.type === "text" && typeof item.text === "string")
+    .map((item: any) => item.text)
+    .join("\n");
+}
+
+function replaceToolText(message: JsonRpcRequest, text: string): JsonRpcRequest {
+  if (!Array.isArray((message as any).result?.content)) return message;
+  const clone = JSON.parse(JSON.stringify(message));
+  let replaced = false;
+  clone.result.content = clone.result.content.map((item: any) => {
+    if (!replaced && item && item.type === "text") {
+      replaced = true;
+      return { ...item, text };
+    }
+    return item;
+  });
+  return clone;
 }

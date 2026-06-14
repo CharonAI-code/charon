@@ -5,7 +5,8 @@ import type { RuntimePolicy } from "../core/policy";
 export function loadMcpPolicy(file = "charon.yml"): RuntimePolicy {
   if (!existsSync(file)) {
     return {
-      defaultVerdict: "PAUSE",
+      defaultVerdict: "PASS",
+      inspection: { mode: "enforce" },
       rules: [{ id: "secret.default", verdict: "DENY", role: "secret" }],
     };
   }
@@ -36,17 +37,65 @@ export function loadMcpPolicy(file = "charon.yml"): RuntimePolicy {
   }
 
   for (const item of raw?.bounds?.deny || []) {
-    rules.push({ id: `deny.${rules.length}`, verdict: "DENY", role: "mcp-tool", includes: String(item) });
+    pushLegacyBoundRules(rules, "DENY", String(item), `deny.${rules.length}`);
   }
   for (const item of raw?.bounds?.pause || []) {
-    rules.push({ id: `pause.${rules.length}`, verdict: "PAUSE", role: "mcp-tool", includes: String(item) });
+    pushLegacyBoundRules(rules, "PAUSE", String(item), `pause.${rules.length}`);
   }
   for (const item of raw?.bounds?.pass || []) {
-    rules.push({ id: `pass.${rules.length}`, verdict: "PASS", role: "mcp-tool", includes: String(item) });
+    pushLegacyBoundRules(rules, "PASS", String(item), `pass.${rules.length}`);
+  }
+
+  for (const item of raw?.controls?.files?.deny || []) {
+    rules.push({ id: `controls.files.deny.${rules.length}`, verdict: "DENY", role: "read-path", includes: String(item).replace(/\/\*\*$/g, "") });
+    rules.push({ id: `controls.files.write_deny.${rules.length}`, verdict: "DENY", role: "write-path", includes: String(item).replace(/\/\*\*$/g, "") });
+  }
+  for (const item of raw?.controls?.files?.read || []) {
+    rules.push({ id: `controls.files.read.${rules.length}`, verdict: "PASS", role: "read-path", includes: String(item).replace(/\/\*\*$/g, "") });
+  }
+  for (const item of raw?.controls?.files?.write || []) {
+    rules.push({ id: `controls.files.write.${rules.length}`, verdict: "PASS", role: "write-path", includes: String(item).replace(/\/\*\*$/g, "") });
+  }
+  for (const item of raw?.controls?.network?.allow || []) {
+    rules.push({ id: `controls.network.allow.${rules.length}`, verdict: "PASS", role: "fetch-url", includes: String(item) });
+  }
+  for (const item of raw?.controls?.commands?.deny || []) {
+    rules.push({ id: `controls.commands.deny.${rules.length}`, verdict: "DENY", role: "shell-command", includes: String(item) });
   }
 
   return {
-    defaultVerdict: "PAUSE",
+    defaultVerdict: policyDefaultVerdict(raw),
+    inspection: {
+      mode: policyInspectionMode(raw),
+    },
     rules,
   };
+}
+
+function policyDefaultVerdict(policy: any): "PASS" | "PAUSE" | "DENY" {
+  const value = String(policy?.default || policy?.defaultVerdict || policy?.bounds?.default || "PASS").toUpperCase();
+  return value === "PAUSE" || value === "DENY" ? value : "PASS";
+}
+
+function policyInspectionMode(policy: any): "enforce" | "review" | "observe" {
+  const value = String(policy?.inspection?.mode || "enforce").toLowerCase();
+  return value === "review" || value === "observe" ? value : "enforce";
+}
+
+function pushLegacyBoundRules(
+  rules: NonNullable<RuntimePolicy["rules"]>,
+  verdict: "PASS" | "PAUSE" | "DENY",
+  value: string,
+  id: string,
+): void {
+  if (value.startsWith("read:")) {
+    rules.push({ id, verdict, role: "read-path", includes: value.slice("read:".length).replace(/\/\*\*$/g, "") });
+    return;
+  }
+  if (/^https?:\/\//i.test(value)) {
+    rules.push({ id, verdict, role: "fetch-url", includes: value });
+    return;
+  }
+  rules.push({ id: `${id}.tool`, verdict, role: "mcp-tool", includes: value });
+  rules.push({ id: `${id}.shell`, verdict, role: "shell-command", includes: value });
 }

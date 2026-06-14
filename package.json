@@ -10,9 +10,8 @@
   "exports": {
     ".": "./dist/src/cli/index.js",
     "./action": "./dist/src/action/index.js",
-    "./adapters/claude": "./dist/src/adapters/claude.js",
-    "./adapters/codex": "./dist/src/adapters/codex.js",
     "./core/policy": "./dist/src/core/policy/index.js",
+    "./inspection": "./dist/src/inspection/index.js",
     "./mcp": "./dist/src/mcp/index.js",
     "./roles": "./dist/src/roles/index.js",
     "./trusted-process": "./dist/src/trusted-process/index.js"
@@ -24,7 +23,6 @@
     "bin",
     "dist",
     "README.md",
-    "ROADMAP.md",
     "LICENSE"
   ],
   "scripts": {

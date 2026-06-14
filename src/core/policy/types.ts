@@ -34,6 +34,9 @@ export interface PolicyRule {
 export interface RuntimePolicy {
   defaultVerdict?: CharonVerdict;
   rules?: PolicyRule[];
+  inspection?: {
+    mode?: "enforce" | "review" | "observe";
+  };
 }
 
 export type PolicyDecision = ActionDecision;
