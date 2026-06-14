@@ -1,9 +1,11 @@
 # Charon
 
-Pre-execution policy enforcement for agent actions.
+Runtime security for agent actions.
 
-Charon receives an attempted action as typed data, evaluates it against local
-policy, and returns one of three decisions before execution:
+Charon sits between an agent runtime and the actions it wants to take. Every
+shell command, file operation, network request, or MCP tool call is normalized
+into typed data, evaluated against local policy, and handled before anything
+risky reaches the machine.
 
 ```txt
 PASS  -> execute
@@ -11,106 +13,96 @@ PAUSE -> queue for review
 DENY  -> block before launch
 ```
 
-Every decision writes a verifiable receipt.
+Every decision writes a local receipt with the action, verdict, policy hash,
+redactions, and execution result.
 
-## Install
+## Quick Start
 
 ```bash
 npx github:CharonAI-code/charon setup
 ```
 
-For local development:
+That single command creates local policy, creates a signed identity, installs
+Charon into Codex as a required MCP server, guards existing MCP servers, runs a
+self-test, and prints the final status.
+
+Restart Codex after setup.
+
+## Daily Commands
 
 ```bash
-npm install
-npm link
+charon status
+charon receipts
+charon restore
 ```
 
-## Quick Start
+`charon restore` removes Charon from Codex config and restores guarded MCP
+servers to their original commands.
+
+## Default Policy
+
+The default policy is `balanced`:
+
+```txt
+normal local dev work       -> PASS
+git push / remote writes    -> PAUSE
+unknown network hosts       -> PAUSE
+.env / private key reads    -> DENY
+npm publish                 -> DENY
+git push --force            -> DENY
+rm -rf style commands       -> DENY
+```
+
+The policy lives in `charon.yml` and stays local to the repo.
+
+## MCP Guard
+
+Charon can wrap existing MCP servers:
 
 ```bash
-charon init
-charon run -- echo "hello"
-charon run -- cat .env
-charon run -- git push
+charon mcp guard codex
+charon mcp status codex
+charon mcp unguard codex
 ```
 
-Expected behavior:
+Guarded MCP calls flow like this:
+
+```txt
+agent -> Charon MCP proxy -> policy decision -> upstream MCP server
+```
+
+`PASS` forwards the call. `PAUSE` and `DENY` return a tool error and write a
+receipt.
+
+## Receipts
+
+```bash
+charon receipts
+charon receipts latest
+charon receipts explain latest
+charon receipts inspect latest
+```
+
+Receipts are stored under `.charon/receipts/` and redact secret-looking values
+before they are written.
+
+## Local Command Gate
+
+For direct shell testing:
+
+```bash
+charon gate -- echo "hello"
+charon gate -- git push
+charon gate -- cat .env
+```
+
+Expected result:
 
 ```txt
 echo      -> PASS
-cat .env  -> DENY
 git push  -> PAUSE
+cat .env  -> DENY
 ```
-
-Review paused actions:
-
-```bash
-charon queue
-charon approve <id>
-charon reject <id>
-```
-
-Inspect proof:
-
-```bash
-charon receipts latest
-charon trace latest
-charon verify latest
-```
-
-## MCP Proxy
-
-Run an MCP server behind Charon:
-
-```bash
-charon mcp proxy -- <mcp-server-command>
-```
-
-Generate a pasteable MCP config snippet:
-
-```bash
-charon mcp config files -- node server.js
-```
-
-The proxy passes normal MCP traffic through, intercepts `tools/call`, evaluates
-the requested tool call as a typed Charon action, and only forwards it to the
-upstream MCP server on `PASS`.
-
-`DENY` and `PAUSE` return an MCP tool error result and write a receipt.
-Malformed tool-call requests fail closed.
-
-## What Charon Enforces
-
-Charon evaluates actions before they reach the machine:
-
-- shell commands
-- file reads and writes
-- secret-looking values
-- network URLs
-- git remotes
-- MCP-style tool calls
-- destructive or release actions
-
-The CLI keeps the older shell-command detector for compatibility, so chained
-commands, package scripts, env-expanded URLs, and `.env` path variants are still
-caught while new decisions are written as typed receipts.
-
-## Receipt v2
-
-New receipts use `charon.trustedReceipt.v2` and include:
-
-- typed action
-- policy decision
-- redacted resources
-- policy hash
-- action hash
-- decision hash
-- receipt hash
-- optional Ed25519 signature
-- execution status
-
-Secrets are redacted before receipts and enforcement audit records are stored.
 
 ## SDK
 
@@ -128,62 +120,14 @@ const decision = await charon.enforce({
 });
 ```
 
-## Policy
-
-`charon init` creates `charon.yml`.
-
-Policy supports command bounds and typed resource rules:
-
-```yaml
-version: 1
-bounds:
-  pass:
-    - echo
-    - npm test
-  pause:
-    - git push
-  deny:
-    - npm publish
-    - rm -rf
-    - read:.env
-  rules:
-    - id: secrets.env
-      verdict: DENY
-      role: secret
-```
-
-## Commands
-
-```bash
-charon init
-charon setup
-charon doctor
-charon selftest
-charon run -- <command>
-charon gate -- <command>
-charon queue
-charon approve <id>
-charon reject <id>
-charon receipts [list|latest|inspect <id|latest>]
-charon trace <id|latest>
-charon verify <receipt|latest>
-charon mcp config <name> -- <mcp-server-command>
-charon mcp proxy -- <mcp-server-command>
-charon status
-```
-
-`charon gate` and `charon run` are equivalent.
-
 ## Scope
 
-Current MVP:
+Charon is local-first security infrastructure for AI agent actions.
 
-- local-first
-- no hosted service
-- no token
+- no hosted service required
 - no payment layer
-- typed pre-execution policy
-- local review queue
-- verifiable receipts
+- no token
+- policy stays local
+- receipts stay local
+- MCP and Codex support are live
 
-Legacy runtime-specific experiments are kept out of the main flow.

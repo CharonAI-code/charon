@@ -111,7 +111,7 @@ export const ACTIONS: SimAction[] = [
   },
   {
     id: "req_06",
-    runtime: "claude",
+    runtime: "codex",
     toolName: "fs.write",
     resource: "src/components/Button.tsx",
     resourceRole: "write-path",
@@ -189,7 +189,7 @@ export const ACTIONS: SimAction[] = [
   },
   {
     id: "req_12",
-    runtime: "claude",
+    runtime: "codex",
     toolName: "fs.write",
     resource: ".charon/queue/req_08.json",
     resourceRole: "write-path",

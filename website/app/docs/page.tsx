@@ -58,10 +58,10 @@ const POLICY_LINES = [
   { text: '  env:', note: "Environment variable access controls." },
   { text: '    expose: []', note: "Variables to expose (empty = none)." },
   { text: '    deny:', note: "Variables to block. Scrubbed from child process env." },
-  { text: '      - ANTHROPIC_API_KEY', note: "" },
-  { text: '      - CLAUDE_CODE_OAUTH_TOKEN', note: "" },
   { text: '      - GITHUB_TOKEN', note: "" },
   { text: '      - GH_TOKEN', note: "" },
+  { text: '      - OPENAI_API_KEY', note: "" },
+  { text: '      - AWS_SECRET_ACCESS_KEY', note: "" },
   { text: '  output:', note: "Output inspection rules." },
   { text: '    secretAction: deny', note: "Verdict when output contains secrets." },
   { text: '    store: redacted', note: "How to store output in receipts (redacted = strip secrets)." },
@@ -786,8 +786,10 @@ export default function DocsPage() {
               <pre style={{ margin: 0, fontSize: "11px", lineHeight: 1.7, color: "#8a8282" }}>{`env:
   expose: []
   deny:
-    - ANTHROPIC_API_KEY
-    - GITHUB_TOKEN`}</pre>
+    - GITHUB_TOKEN
+    - GH_TOKEN
+    - OPENAI_API_KEY
+    - AWS_SECRET_ACCESS_KEY`}</pre>
             </div>
             <p style={{ ...descStyle, marginTop: "-12px" }}>
               Denied env vars are scrubbed from the child process environment
@@ -920,7 +922,7 @@ export default function DocsPage() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: "1px", background: "#1e1a1a" }}>
               <CommandRef name="charon policy" desc="Print the active charon.yml policy." />
-              <CommandRef name="charon policy synth" desc="Auto-generate a policy from observed agent behavior (requires aeon history)." />
+              <CommandRef name="charon policy synth" desc="Generate a policy proposal from local project scripts and recent receipts." />
               <CommandRef name="charon policy review [id]" desc="Review a policy proposal. Shows diff from current policy." />
               <CommandRef name="charon policy apply <id>" desc="Apply an approved policy proposal. Replaces charon.yml." />
             </div>
@@ -1249,7 +1251,6 @@ DEFAULT_MAX_ENTRIES = 512
 
             <div style={codeBlock}>
               <pre style={{ margin: 0, fontSize: "11px", lineHeight: 1.7, color: "#8a8282" }}>{`// API keys
-sk-ant-*       → [REDACTED:anthropic]
 sk-proj-*      → [REDACTED:openai]
 sk-*           → [REDACTED:api-key]
 ghp_*, github_pat_* → [REDACTED:github]
@@ -1281,10 +1282,10 @@ ghp_*, github_pat_* → [REDACTED:github]
 
             <div style={codeBlock}>
               <pre style={{ margin: 0, fontSize: "11px", lineHeight: 1.7, color: "#8a8282" }}>{`# Wrap a specific MCP server
-charon mcp proxy -- npx @anthropic/mcp-server-github
+charon mcp proxy -- npx @modelcontextprotocol/server-github
 
 # Output wrapped config for pasting into config.json
-charon mcp config github -- npx @anthropic/mcp-server-github`}</pre>
+charon mcp config github -- npx @modelcontextprotocol/server-github`}</pre>
             </div>
 
             <h4 style={{ ...subheadStyle, marginTop: "28px" }}>Flow</h4>
@@ -1325,15 +1326,15 @@ charon mcp server --cwd /path/to/project`}</pre>
               <pre style={{ margin: 0, fontSize: "11px", lineHeight: 1.7, color: "#8a8282" }}>{`# Before guard
 [mcp_servers.github]
 command = "npx"
-args = ["@anthropic/mcp-server-github"]
+args = ["@modelcontextprotocol/server-github"]
 
 # After guard
 [mcp_servers.github]
 # charon.guarded = true
 # charon.original_command = "npx"
-# charon.original_args = ["@anthropic/mcp-server-github"]
+# charon.original_args = ["@modelcontextprotocol/server-github"]
 command = "node"
-args = ["/path/to/charon.js", "mcp", "proxy", "--", "npx", "@anthropic/mcp-server-github"]`}</pre>
+args = ["/path/to/charon.js", "mcp", "proxy", "--", "npx", "@modelcontextprotocol/server-github"]`}</pre>
             </div>
           </section>
 
