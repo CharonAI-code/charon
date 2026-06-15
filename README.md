@@ -10,9 +10,6 @@ PAUSE -> queue for review
 DENY  -> block before launch
 ```
 
-Website: https://charon.codes  
-Docs: https://charon.codes/docs
-
 ## Why Charon
 
 Agent instructions live inside model context. Tool output, repo content, web pages, and user messages can all influence that context.
