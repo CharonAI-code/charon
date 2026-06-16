@@ -141,8 +141,12 @@ function createTools(input: {
       }, ["command"]),
       handler: async (args) => {
         const command = [String(args.command), ...stringArray(args.args)].join(" ");
-        return enforce("charon_shell.run", args, () => runCommand(cwd, String(args.command), stringArray(args.args)), [
+        const resources: ActionResource[] = [
           { role: "shell-command", value: command },
+          ...inferDeleteResources(String(args.command), stringArray(args.args)),
+        ];
+        return enforce("charon_shell.run", args, () => runCommand(cwd, String(args.command), stringArray(args.args)), [
+          ...resources,
         ]);
       },
     },
@@ -184,6 +188,7 @@ function createTools(input: {
         return enforce("charon_git.run", { ...args, command: "git" }, () => runCommand(cwd, "git", gitArgs), [
           { role: "shell-command", value: ["git", ...gitArgs].join(" ") },
           { role: "mcp-tool", value: "charon_git.run" },
+          ...inferGitDeleteResources(gitArgs),
         ]);
       },
     },
@@ -274,6 +279,76 @@ function safeObject(value: unknown): Record<string, unknown> {
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map(String);
+}
+
+function inferDeleteResources(command: string, args: string[]): ActionResource[] {
+  const base = command.split("/").pop() || command;
+  if (base === "rm" || base === "unlink" || base === "rmdir" || base === "trash") {
+    return args
+      .filter((arg) => arg && !arg.startsWith("-"))
+      .map((value) => ({ role: "delete-path", value }));
+  }
+  if (base === "find" && args.includes("-delete")) {
+    const roots: string[] = [];
+    for (const arg of args) {
+      if (!arg || arg.startsWith("-")) break;
+      roots.push(arg);
+    }
+    return (roots.length ? roots : ["."]).map((value) => ({ role: "delete-path", value }));
+  }
+  if ((base === "sh" || base === "zsh" || base === "bash") && args.includes("-lc")) {
+    const script = args[args.indexOf("-lc") + 1] || "";
+    return inferDeleteResourcesFromText(script);
+  }
+  return inferDeleteResourcesFromText([command, ...args].join(" "));
+}
+
+function inferGitDeleteResources(args: string[]): ActionResource[] {
+  const subcommand = args.find((arg) => arg && !arg.startsWith("-")) || "";
+  if (subcommand === "rm") {
+    return args
+      .slice(args.indexOf(subcommand) + 1)
+      .filter((arg) => arg && !arg.startsWith("-"))
+      .map((value) => ({ role: "delete-path", value }));
+  }
+  if (subcommand === "clean") {
+    return [{ role: "delete-path", value: "." }];
+  }
+  if (subcommand === "restore" && args.includes("--source")) {
+    return args
+      .slice(args.indexOf(subcommand) + 1)
+      .filter((arg) => arg && !arg.startsWith("-") && arg !== "HEAD" && arg !== "HEAD~1")
+      .map((value) => ({ role: "delete-path", value }));
+  }
+  return [];
+}
+
+function inferDeleteResourcesFromText(text: string): ActionResource[] {
+  const resources: ActionResource[] = [];
+  const commandMatches = text.matchAll(/\b(?:rm|unlink|rmdir|trash)\b\s+([^;&|]+)/g);
+  for (const match of commandMatches) {
+    for (const token of splitShellLike(match[1] || "")) {
+      if (token && !token.startsWith("-")) resources.push({ role: "delete-path", value: stripQuotes(token) });
+    }
+  }
+  const findMatches = text.matchAll(/\bfind\b\s+([^;&|]*?)\s+-delete\b/g);
+  for (const match of findMatches) {
+    const roots: string[] = [];
+    for (const token of splitShellLike(match[1] || "")) {
+      if (!token || token.startsWith("-")) break;
+      roots.push(token);
+    }
+    for (const root of roots.length ? roots : ["."]) resources.push({ role: "delete-path", value: stripQuotes(root) });
+  }
+  return resources;
+}
+
+function splitShellLike(text: string): string[] {
+  return text.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+}
+
+function stripQuotes(value: string): string {
+  return value.replace(/^["']|["']$/g, "");
 }
 
 function parseJson(line: string): JsonRpcRequest | null {

@@ -7,6 +7,8 @@ __pycache__/
 .charon/
 charon.yml
 charon.generated.yml
+.env
+.env.*
 .next/
 out/
 *.tsbuildinfo

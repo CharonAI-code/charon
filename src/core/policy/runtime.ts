@@ -47,6 +47,7 @@ function defaultPolicy() {
         read: ["."],
         write: [".charon/**"],
         deny: [".env", ".env.*", "~/.ssh/**", "~/.aws/**", "~/.config/gh/**"],
+        delete_deny: [],
       },
       network: {
         allow: ["github.com", "api.github.com"],
@@ -106,12 +107,15 @@ function validatePolicy(policy, config = "charon.yml") {
     throw new Error("controls.output.store must be none or redacted");
   }
   for (const [section, keys] of Object.entries({
-    files: ["read", "write", "deny"],
+    files: ["read", "write", "deny", "delete_deny"],
     network: ["allow", "deny"],
     commands: ["deny"],
     env: ["expose", "deny"],
   })) {
     for (const key of keys) {
+      if (section === "files" && key === "delete_deny" && controls[section][key] === undefined) {
+        controls[section][key] = [];
+      }
       const value = controls[section][key];
       if (!Array.isArray(value) || !value.every((x) => typeof x === "string")) {
         throw new Error(`controls.${section}.${key} must be a string array`);
@@ -302,7 +306,52 @@ function completeTrace(trace, executionStatus, extra = {}) {
 }
 
 function detectDeniedFiles(action, policy) {
-  return policy.controls.files.deny.filter((item) => actionReferencesPath(action, item));
+  const reads = policy.controls.files.deny.filter((item) => actionReferencesPath(action, item));
+  const deletes = detectDeniedDeletes(action, policy).map((item) => `delete:${item}`);
+  return [...new Set([...reads, ...deletes])];
+}
+
+function detectDeniedDeletes(action, policy) {
+  const protectedPaths = policy.controls.files.delete_deny || [];
+  if (!protectedPaths.length) return [];
+  const targets = inferDeleteTargets(action);
+  if (!targets.length) return [];
+  return protectedPaths.filter((item) => {
+    return targets.some((target) => {
+      if (target === "." || target === "./" || target === process.cwd()) return true;
+      return actionReferencesPath({ ...action, commandStrings: [target], argCandidates: [[target]], pathHints: [target], searchText: target }, item);
+    });
+  });
+}
+
+function inferDeleteTargets(action) {
+  const targets = [];
+  for (const segment of action.segments || []) {
+    const exe = path.basename(String(segment.executable || ""));
+    const args = (segment.args || []).map(String);
+    if (exe === "rm" || exe === "unlink" || exe === "rmdir" || exe === "trash") {
+      for (const arg of args) {
+        if (!arg || arg.startsWith("-")) continue;
+        targets.push(arg);
+      }
+      continue;
+    }
+    if (exe === "find" && args.includes("-delete")) {
+      const roots = [];
+      for (const arg of args) {
+        if (!arg || arg.startsWith("-")) break;
+        roots.push(arg);
+      }
+      targets.push(...(roots.length ? roots : ["."]));
+    }
+    if (["node", "python", "python3"].includes(exe)) {
+      const text = [segment.rendered, ...args].join(" ");
+      if (/\b(?:fs\.)?(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\s*\(/.test(text) || /\b(?:os\.remove|shutil\.rmtree)\s*\(/.test(text)) {
+        for (const match of text.matchAll(/["']([^"']+)["']/g)) targets.push(match[1]);
+      }
+    }
+  }
+  return [...new Set(targets)];
 }
 
 function detectNetworkHosts(action, policy) {

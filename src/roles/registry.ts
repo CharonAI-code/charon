@@ -180,4 +180,3 @@ export function getRoleDefinition(role: ResourceRole): RoleDefinition {
 export function canonicalizeResource(role: ResourceRole, value: string, context?: CanonicalizeContext): string {
   return getRoleDefinition(role).canonicalize(value, context);
 }
-
