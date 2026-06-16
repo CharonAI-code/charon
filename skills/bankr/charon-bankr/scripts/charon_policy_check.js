@@ -49,6 +49,26 @@ function includesNormalized(list, value) {
   return asArray(list).map(normalizeString).includes(normalized);
 }
 
+function globToRegExp(glob) {
+  const escaped = String(glob)
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "\u0000")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\u0000/g, ".*");
+  return new RegExp(`^${escaped}$`);
+}
+
+function pathMatches(action, patterns) {
+  const candidates = [...asArray(action.path), ...asArray(action.paths), ...asArray(action.target)]
+    .filter((value) => value !== undefined && value !== null)
+    .map(String);
+  if (candidates.length === 0) return false;
+  return asArray(patterns).some((pattern) => {
+    const re = globToRegExp(pattern);
+    return candidates.some((candidate) => re.test(candidate));
+  });
+}
+
 function compareNumber(actionValue, expectedValue, operator) {
   const left = Number(actionValue);
   const right = Number(expectedValue);
@@ -67,6 +87,13 @@ function actionMatches(ruleAction, actionType) {
 
 function conditionMatches(action, policy, key, expectedRaw) {
   const expected = resolveRef(expectedRaw, policy);
+  if (key === "category_in") return includesNormalized(expected, action.category);
+  if (key === "operation_in") return includesNormalized(expected, action.operation);
+  if (key === "risk_in") return includesNormalized(expected, action.risk);
+  if (key === "command_in") return includesNormalized(expected, action.command);
+  if (key === "command_not_in") return !includesNormalized(expected, action.command);
+  if (key === "path_glob") return pathMatches(action, expected);
+  if (key === "contains_secret") return Boolean(action.contains_secret) === Boolean(expected);
   if (key === "amount_usd_gt") return compareNumber(action.amount_usd, expected, "gt");
   if (key === "amount_usd_gte") return compareNumber(action.amount_usd, expected, "gte");
   if (key === "amount_usd_lt") return compareNumber(action.amount_usd, expected, "lt");

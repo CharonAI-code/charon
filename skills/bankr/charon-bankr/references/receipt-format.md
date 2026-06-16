@@ -1,6 +1,6 @@
 # Receipt Format
 
-Receipts record the policy decision for the normalized Bankr action.
+A receipt is the local record of the policy decision.
 
 ```json
 {
@@ -8,17 +8,16 @@ Receipts record the policy decision for the normalized Bankr action.
   "receipt_id": "sha256:...",
   "created_at": "2026-06-16T00:00:00.000Z",
   "action": {
-    "id": "bankr_001",
-    "type": "wallet.transfer",
-    "chain": "base",
-    "asset": "ETH",
-    "amount_usd": 850,
-    "recipient": "0x0000000000000000000000000000000000000000"
+    "type": "git.push",
+    "category": "git",
+    "operation": "push",
+    "remote": "origin",
+    "branch": "main"
   },
   "decision": {
     "verdict": "PAUSE",
-    "matched_rule": "pause-large-transfer",
-    "reason": "amount_usd_gt matched"
+    "matched_rule": "pause-git-push",
+    "reason": "pause-git-push matched"
   },
   "execution": {
     "launched": false,
@@ -27,6 +26,9 @@ Receipts record the policy decision for the normalized Bankr action.
 }
 ```
 
-For `DENY` and `PAUSE`, `execution.launched` must be `false`.
+Receipts are created before execution.
 
-For `PASS`, the receipt is still created before execution. A later runtime can append execution status if the host supports it.
+`DENY` and `PAUSE` receipts must keep `execution.launched = false`.
+
+`PASS` receipts use `execution.status = "ready_to_launch"` because this skill cannot observe the final
+Bankr runtime execution state.

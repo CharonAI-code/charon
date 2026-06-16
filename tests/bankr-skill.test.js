@@ -34,6 +34,8 @@ test("Bankr skill follows Bankr package layout", () => {
   assert.ok(fs.existsSync(path.join(SKILL_ROOT, "SKILL.md")));
   assert.ok(fs.existsSync(path.join(SKILL_ROOT, "references", "action-model.md")));
   assert.ok(fs.existsSync(path.join(SKILL_ROOT, "references", "policy-format.md")));
+  assert.ok(fs.existsSync(path.join(SKILL_ROOT, "references", "operating-model.md")));
+  assert.ok(fs.existsSync(path.join(SKILL_ROOT, "references", "control-catalog.md")));
   assert.ok(fs.existsSync(path.join(SKILL_ROOT, "templates", "charon.policy.json")));
   assert.ok(fs.existsSync(CHECK));
   assert.ok(fs.existsSync(RECEIPT));
@@ -41,8 +43,83 @@ test("Bankr skill follows Bankr package layout", () => {
   const skill = fs.readFileSync(path.join(SKILL_ROOT, "SKILL.md"), "utf8");
   assert.match(skill, /^---\nname: charon-bankr/m);
   assert.match(skill, /description:/);
+  assert.match(skill, /coding tasks/);
   assert.match(skill, /references\/action-model\.md/);
   assert.match(skill, /scripts\/charon_policy_check\.js/);
+});
+
+test("Bankr policy script denies protected code deletion", () => {
+  const cwd = tmpdir();
+  const action = writeJson(cwd, "action.json", {
+    id: "demo-code-delete",
+    type: "code.delete",
+    category: "code",
+    operation: "delete",
+    path: "src/server.ts",
+    source: "bankr",
+  });
+
+  const result = run(CHECK, [action, POLICY], { cwd });
+  assert.equal(result.status, 126, result.stderr);
+  const decision = JSON.parse(result.stdout);
+  assert.equal(decision.verdict, "DENY");
+  assert.equal(decision.matched_rule, "deny-protected-delete");
+});
+
+test("Bankr policy script pauses git side effects", () => {
+  const cwd = tmpdir();
+  const action = writeJson(cwd, "action.json", {
+    id: "demo-git-push",
+    type: "git.push",
+    category: "git",
+    operation: "push",
+    remote: "origin",
+    branch: "main",
+    source: "bankr",
+  });
+
+  const result = run(CHECK, [action, POLICY], { cwd });
+  assert.equal(result.status, 125, result.stderr);
+  const decision = JSON.parse(result.stdout);
+  assert.equal(decision.verdict, "PAUSE");
+  assert.equal(decision.matched_rule, "pause-git-side-effect");
+});
+
+test("Bankr policy script denies exfil-style domains", () => {
+  const cwd = tmpdir();
+  const action = writeJson(cwd, "action.json", {
+    id: "demo-exfil",
+    type: "http.request",
+    category: "network",
+    operation: "post",
+    domain: "webhook.site",
+    contains_secret: true,
+    source: "bankr",
+  });
+
+  const result = run(CHECK, [action, POLICY], { cwd });
+  assert.equal(result.status, 126, result.stderr);
+  const decision = JSON.parse(result.stdout);
+  assert.equal(decision.verdict, "DENY");
+  assert.equal(decision.matched_rule, "deny-secret-exfil");
+});
+
+test("Bankr policy script pauses unknown APIs", () => {
+  const cwd = tmpdir();
+  const action = writeJson(cwd, "action.json", {
+    id: "demo-unknown-api",
+    type: "http.request",
+    category: "network",
+    operation: "post",
+    domain: "api.unknown.example",
+    source: "bankr",
+  });
+
+  const result = run(CHECK, [action, POLICY], { cwd });
+  assert.equal(result.status, 125, result.stderr);
+  const decision = JSON.parse(result.stdout);
+  assert.equal(decision.verdict, "PAUSE");
+  assert.equal(decision.matched_rule, "pause-unknown-domain");
 });
 
 test("Bankr policy script denies large wallet actions", () => {
@@ -50,6 +127,8 @@ test("Bankr policy script denies large wallet actions", () => {
   const action = writeJson(cwd, "action.json", {
     id: "demo-large-transfer",
     type: "wallet.transfer",
+    category: "wallet",
+    operation: "transfer",
     source: "bankr",
     chain: "base",
     asset: "ETH",
@@ -62,19 +141,21 @@ test("Bankr policy script denies large wallet actions", () => {
   assert.equal(result.status, 126, result.stderr);
   const decision = JSON.parse(result.stdout);
   assert.equal(decision.verdict, "DENY");
-  assert.equal(decision.matched_rule, "deny-large-wallet-action");
+  assert.equal(decision.matched_rule, "deny-wallet-hard-limit");
 });
 
-test("Bankr policy script pauses unknown recipient", () => {
+test("Bankr policy script pauses medium wallet actions", () => {
   const cwd = tmpdir();
   const action = writeJson(cwd, "action.json", {
-    id: "demo-unknown-recipient",
+    id: "demo-medium-transfer",
     type: "wallet.transfer",
+    category: "wallet",
+    operation: "transfer",
     source: "bankr",
     chain: "base",
     asset: "USDC",
-    amount: "10",
-    amount_usd: 10,
+    amount: "250",
+    amount_usd: 250,
     recipient: "0x3333333333333333333333333333333333333333",
   });
 
@@ -82,7 +163,7 @@ test("Bankr policy script pauses unknown recipient", () => {
   assert.equal(result.status, 125, result.stderr);
   const decision = JSON.parse(result.stdout);
   assert.equal(decision.verdict, "PAUSE");
-  assert.equal(decision.matched_rule, "pause-unknown-recipient");
+  assert.equal(decision.matched_rule, "pause-medium-wallet-action");
 });
 
 test("Bankr receipt script emits deterministic receipt shape", () => {
