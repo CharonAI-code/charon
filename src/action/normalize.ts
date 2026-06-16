@@ -34,6 +34,9 @@ export function inferResources(input: RawToolCall, cwd = process.cwd()): ActionR
   if (toolName.includes("shell") || toolName.includes("command")) {
     resources.push(resource("shell-command", argsText, "tool.args", cwd));
   }
+  for (const value of inferDeletePaths(argsText)) {
+    resources.push(resource("delete-path", value, "tool.args", cwd));
+  }
 
   if (toolName.includes("mcp") || toolName.includes(".")) {
     resources.push(resource("mcp-tool", input.toolName, "tool.name", cwd));
@@ -133,6 +136,17 @@ function extractUrls(value: string): string[] {
   for (const match of value.matchAll(/\bhttps?:\/\/[^\s"']+/g)) urls.add(match[0]);
   for (const match of value.matchAll(/\bgit@[^:\s]+:[^\s"']+/g)) urls.add(match[0]);
   return [...urls];
+}
+
+function inferDeletePaths(value: string): string[] {
+  const paths = new Set<string>();
+  for (const match of value.matchAll(/\b(?:fs\.)?(?:rm|unlink|rmdir)\s*\(\s*["']([^"']+)["']/g)) {
+    paths.add(match[1]);
+  }
+  for (const match of value.matchAll(/\b(?:rmSync|unlinkSync|rmdirSync)\s*\(\s*["']([^"']+)["']/g)) {
+    paths.add(match[1]);
+  }
+  return [...paths];
 }
 
 function dedupe(resources: ActionResource[]): ActionResource[] {

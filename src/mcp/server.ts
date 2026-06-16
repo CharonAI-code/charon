@@ -331,6 +331,12 @@ function inferDeleteResourcesFromText(text: string): ActionResource[] {
       if (token && !token.startsWith("-")) resources.push({ role: "delete-path", value: stripQuotes(token) });
     }
   }
+  for (const match of text.matchAll(/\b(?:fs\.)?(?:rm|unlink|rmdir)\s*\(\s*["']([^"']+)["']/g)) {
+    resources.push({ role: "delete-path", value: match[1] });
+  }
+  for (const match of text.matchAll(/\b(?:rmSync|unlinkSync|rmdirSync)\s*\(\s*["']([^"']+)["']/g)) {
+    resources.push({ role: "delete-path", value: match[1] });
+  }
   const findMatches = text.matchAll(/\bfind\b\s+([^;&|]*?)\s+-delete\b/g);
   for (const match of findMatches) {
     const roots: string[] = [];

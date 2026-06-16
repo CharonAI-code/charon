@@ -64,6 +64,10 @@ function enforceStatusCommand(opts = {}) {
   const report = readEnforcementReport(codexTargetInput());
   if (opts.quiet) return report;
   console.log("Charon Codex enforcement");
+  console.log((report.hooksEnabled ? "OK " : "NO ") + " hooks feature enabled");
+  console.log((report.hooksInstalled ? "OK " : "NO ") + " Charon hooks installed");
+  console.log((report.hooksTargetValid ? "OK " : "WARN") + " Charon hooks target valid");
+  console.log((report.bundledBypassPlugins === 0 ? "OK " : "NO ") + " bundled bypass plugins enabled=" + report.bundledBypassPlugins);
   console.log(`${report.configValid ? "OK " : "NO "} Codex config valid${report.configError ? ` - ${report.configError}` : ""}`);
   console.log(`${report.shellDisabled ? "OK " : "NO "} native shell disabled`);
   console.log(`${report.jsReplDisabled ? "OK " : "NO "} local JS runtime disabled`);

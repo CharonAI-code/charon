@@ -898,8 +898,12 @@ test("codex enforce mode installs required Charon MCP and disables native shell"
   assert.match(config, /codex hook pre-tool-use/);
   assert.match(config, /codex hook permission-request/);
   assert.match(config, /codex hook post-tool-use/);
-  assert.doesNotMatch(config, /\[mcp_servers\.node_repl\]/);
+  assert.match(config, /\[mcp_servers\.node_repl\]\nenabled = false\ncommand = "node_repl"\nargs = \[\]/);
   assert.match(config, /\[plugins\."browser@openai-bundled"\.mcp_servers\.node_repl\]\nenabled = false/);
+  assert.match(config, /\[plugins\."chrome@openai-bundled"\]\nenabled = false/);
+  assert.match(config, /\[plugins\."computer-use@openai-bundled"\]\nenabled = false/);
+  assert.match(config, /\[plugins\."chrome@openai-bundled"\.mcp_servers\.node_repl\]\nenabled = false/);
+  assert.match(config, /\[plugins\."computer-use@openai-bundled"\.mcp_servers\.node_repl\]\nenabled = false/);
   assert.match(config, /\[mcp_servers\.charon\]/);
   assert.match(config, /required = true/);
   assert.match(config, /default_tools_approval_mode = "approve"/);
@@ -916,6 +920,10 @@ test("codex enforce mode installs required Charon MCP and disables native shell"
   assert.match(status.stdout, /OK  Codex config valid/);
   assert.match(status.stdout, /OK  native shell disabled/);
   assert.match(status.stdout, /OK  local JS runtime disabled/);
+  assert.match(status.stdout, /OK  hooks feature enabled/);
+  assert.match(status.stdout, /OK  Charon hooks installed/);
+  assert.match(status.stdout, /OK  Charon hooks target valid/);
+  assert.match(status.stdout, /OK  bundled bypass plugins enabled=0/);
   assert.match(status.stdout, /OK  native bypass MCP open=0/);
   assert.match(status.stdout, /OK  Charon MCP installed/);
   assert.match(status.stdout, /OK  Charon MCP required/);
@@ -976,10 +984,13 @@ test("codex enforce is transactional and idempotent", () => {
   assert.equal((config.match(/^# >>> charon hooks$/gm) || []).length, 1);
   assert.equal((config.match(/^# <<< charon hooks$/gm) || []).length, 1);
   assert.equal((config.match(/# charon\.guarded = true/g) || []).length, 1);
-  assert.equal((config.match(/^\[mcp_servers\.node_repl\]$/gm) || []).length, 0);
+  assert.equal((config.match(/^\[mcp_servers\.node_repl\]$/gm) || []).length, 1);
+  assert.match(config, /\[mcp_servers\.node_repl\]\nenabled = false\ncommand = "node_repl"\nargs = \[\]/);
   assert.equal((config.match(/^\[plugins\."browser@openai-bundled"\.mcp_servers\.node_repl\]$/gm) || []).length, 1);
   assert.match(config, /\[plugins\."browser@openai-bundled"\.mcp_servers\.node_repl\]\nenabled = false/);
   assert.match(config, /\[plugins\."browser@openai-bundled"\]\nenabled = false/);
+  assert.match(config, /\[plugins\."chrome@openai-bundled"\]\nenabled = false/);
+  assert.match(config, /\[plugins\."computer-use@openai-bundled"\]\nenabled = false/);
   assert.match(config, /shell_tool = false/);
   assert.match(config, /js_repl = false/);
 });
@@ -1030,6 +1041,32 @@ test("codex hook denies unknown native delete tools", () => {
     tool_name: "Delete repo files except README and .git",
     tool_input: {
       removed: [".charon", ".gitignore", "charon.yml", "package.json", "src"],
+    },
+  };
+  const result = childProcess.spawnSync(process.execPath, [CLI, "codex", "hook", "pre-tool-use"], {
+    cwd,
+    input: JSON.stringify(payload),
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.hookSpecificOutput.permissionDecision, "deny");
+  assert.match(output.hookSpecificOutput.permissionDecisionReason, /Charon DENY/);
+});
+
+test("codex hook denies node_repl delete code", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  const policy = yaml.load(fs.readFileSync(path.join(cwd, "charon.yml"), "utf8"));
+  policy.controls.files.delete_deny = [".charon/**", "charon.yml", "package.json", "src/**"];
+  fs.writeFileSync(path.join(cwd, "charon.yml"), yaml.dump(policy));
+
+  const payload = {
+    cwd,
+    hook_event_name: "PreToolUse",
+    tool_name: "mcp__node_repl__js",
+    tool_input: {
+      code: "await fs.rm('src', { recursive: true, force: true }); await fs.rm('package.json', { force: true });",
     },
   };
   const result = childProcess.spawnSync(process.execPath, [CLI, "codex", "hook", "pre-tool-use"], {
@@ -1103,7 +1140,9 @@ test("codex status fails closed when native node runtime remains", () => {
     "[features]",
     "shell_tool = false",
     "js_repl = false",
+    "hooks = true",
     "",
+    ...codexHookBlock(),
     "[mcp_servers.charon]",
     `command = ${JSON.stringify(process.execPath)}`,
     `args = ${JSON.stringify([CLI, "mcp", "server", "--cwd", cwd])}`,
@@ -1130,7 +1169,9 @@ test("codex status allows explicitly disabled native node runtime", () => {
     "[features]",
     "shell_tool = false",
     "js_repl = false",
+    "hooks = true",
     "",
+    ...codexHookBlock(),
     "[mcp_servers.charon]",
     `command = ${JSON.stringify(process.execPath)}`,
     `args = ${JSON.stringify([CLI, "mcp", "server", "--cwd", cwd])}`,
@@ -1148,8 +1189,124 @@ test("codex status allows explicitly disabled native node runtime", () => {
   assert.match(status.stdout, /ENFORCED/);
 });
 
+test("codex status fails closed when hooks are missing", () => {
+  const cwd = tmpdir();
+  const codexHome = path.join(tmpdir(), ".codex");
+  fs.mkdirSync(codexHome, { recursive: true });
+  const configPath = path.join(codexHome, "config.toml");
+  fs.writeFileSync(configPath, [
+    "[features]",
+    "shell_tool = false",
+    "js_repl = false",
+    "hooks = true",
+    "",
+    "[mcp_servers.charon]",
+    "command = " + JSON.stringify(process.execPath),
+    "args = " + JSON.stringify([CLI, "mcp", "server", "--cwd", cwd]),
+    "required = true",
+    "",
+    "[mcp_servers.node_repl]",
+    "enabled = false",
+    "",
+  ].join("\n"));
+
+  const status = run(["enforce", "status"], { cwd, env: { CODEX_HOME: codexHome } });
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /NO  Charon hooks installed/);
+  assert.match(status.stdout, /NOT ENFORCED/);
+});
+
+test("codex status fails closed when hooks are damaged", () => {
+  const cwd = tmpdir();
+  const codexHome = path.join(tmpdir(), ".codex");
+  fs.mkdirSync(codexHome, { recursive: true });
+  const configPath = path.join(codexHome, "config.toml");
+  const damagedHooks = codexHookBlock().filter((line) => !line.includes("post-tool-use"));
+  fs.writeFileSync(configPath, [
+    "[features]",
+    "shell_tool = false",
+    "js_repl = false",
+    "hooks = true",
+    "",
+    ...damagedHooks,
+    "[mcp_servers.charon]",
+    "command = " + JSON.stringify(process.execPath),
+    "args = " + JSON.stringify([CLI, "mcp", "server", "--cwd", cwd]),
+    "required = true",
+    "",
+    "[mcp_servers.node_repl]",
+    "enabled = false",
+    "",
+  ].join("\n"));
+
+  const status = run(["enforce", "status"], { cwd, env: { CODEX_HOME: codexHome } });
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /NO  Charon hooks installed/);
+  assert.match(status.stdout, /NOT ENFORCED/);
+});
+
+test("codex status fails closed when hooks target another Charon binary", () => {
+  const cwd = tmpdir();
+  const codexHome = path.join(tmpdir(), ".codex");
+  fs.mkdirSync(codexHome, { recursive: true });
+  const configPath = path.join(codexHome, "config.toml");
+  fs.writeFileSync(configPath, [
+    "[features]",
+    "shell_tool = false",
+    "js_repl = false",
+    "hooks = true",
+    "",
+    ...codexHookBlock("/tmp/wrong-node", "/tmp/wrong-charon.js"),
+    "[mcp_servers.charon]",
+    "command = " + JSON.stringify(process.execPath),
+    "args = " + JSON.stringify([CLI, "mcp", "server", "--cwd", cwd]),
+    "required = true",
+    "",
+    "[mcp_servers.node_repl]",
+    "enabled = false",
+    "",
+  ].join("\n"));
+
+  const status = run(["enforce", "status"], { cwd, env: { CODEX_HOME: codexHome } });
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /WARN Charon hooks target valid/);
+  assert.match(status.stdout, /NOT ENFORCED/);
+});
+
 function escapeForRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function codexHookBlock(nodePath = process.execPath, cliPath = CLI) {
+  const base = nodePath + " " + cliPath + " codex hook ";
+  return [
+    "# >>> charon hooks",
+    "[[hooks.PreToolUse]]",
+    'matcher = "*"',
+    "",
+    "[[hooks.PreToolUse.hooks]]",
+    'type = "command"',
+    "command = " + JSON.stringify(base + "pre-tool-use"),
+    "timeout = 30",
+    "",
+    "[[hooks.PermissionRequest]]",
+    'matcher = "*"',
+    "",
+    "[[hooks.PermissionRequest.hooks]]",
+    'type = "command"',
+    "command = " + JSON.stringify(base + "permission-request"),
+    "timeout = 30",
+    "",
+    "[[hooks.PostToolUse]]",
+    'matcher = "*"',
+    "",
+    "[[hooks.PostToolUse.hooks]]",
+    'type = "command"',
+    "command = " + JSON.stringify(base + "post-tool-use"),
+    "timeout = 30",
+    "# <<< charon hooks",
+    "",
+  ];
 }
 
 test("mcp proxy fails closed on malformed and invalid tool calls", async () => {
@@ -1267,6 +1424,19 @@ test("mcp server enforces policy-driven delete boundaries before execution", asy
     const broadDenied = JSON.parse(await waitForLine(server.stdout, (line) => line.includes("Charon DENY")));
     assert.equal(broadDenied.result.isError, true);
     assert.equal(fs.existsSync(path.join(cwd, "charon.yml")), true);
+
+    server.stdin.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "charon_shell.run",
+        arguments: { command: "node", args: ["-e", "require('fs').rmSync('src', { recursive: true, force: true })"] },
+      },
+    }) + "\n");
+    const jsDenied = JSON.parse(await waitForLine(server.stdout, (line) => line.includes("Charon DENY")));
+    assert.equal(jsDenied.result.isError, true);
+    assert.equal(fs.existsSync(path.join(cwd, "src", "server.ts")), true);
   } finally {
     server.kill();
   }
@@ -1427,6 +1597,22 @@ test("normalization catches embedded file reads", () => {
   const pythonRead = run(["gate", "--", "python3", "-c", "open('.env').read()"], { cwd });
   assert.equal(pythonRead.status, 126);
   assert.match(pythonRead.stderr, /denied file path/);
+});
+
+test("normalization catches embedded JavaScript deletes", () => {
+  const cwd = tmpdir();
+  assert.equal(run(["init"], { cwd }).status, 0);
+  fs.mkdirSync(path.join(cwd, "src"), { recursive: true });
+  fs.writeFileSync(path.join(cwd, "src", "server.ts"), "console.log('demo')\n");
+  const policy = yaml.load(fs.readFileSync(path.join(cwd, "charon.yml"), "utf8"));
+  policy.controls.files.delete_deny = ["src/**", "package.json"];
+  policy.controls.commands.deny = [];
+  fs.writeFileSync(path.join(cwd, "charon.yml"), yaml.dump(policy));
+
+  const result = run(["gate", "--", "node", "-e", "require('fs').rmSync('src', { recursive: true, force: true })"], { cwd });
+  assert.equal(result.status, 126);
+  assert.match(result.stderr, /denied file path|delete-path|delete_deny/);
+  assert.equal(fs.existsSync(path.join(cwd, "src", "server.ts")), true);
 });
 
 test("normalization catches env-indirected network hosts", () => {
