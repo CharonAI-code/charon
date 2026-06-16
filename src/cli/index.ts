@@ -11,8 +11,9 @@ const yaml = require("js-yaml");
 const { createActionRequest } = require("../action");
 const { ActionCoordinator } = require("../trusted-process/coordinator");
 const { createTrustedReceipt, verifyTrustedReceipt } = require("../trusted-process/receipt");
-const { enforceCommand, mcpCommand } = require("./commands/codex-mcp");
+const { codexCommand, enforceCommand, mcpCommand } = require("./commands/codex-mcp");
 const { policyCommand } = require("./commands/policy");
+const { aeonCommand } = require("./commands/aeon");
 const { inspectOutput, InspectionSession } = require("../inspection");
 const {
   defaultPolicy,
@@ -82,8 +83,12 @@ async function main(argv) {
       return verifyCommand(args);
     case "mcp":
       return mcpCommand(args);
+    case "codex":
+      return codexCommand(args);
     case "enforce":
       return enforceCommand(args);
+    case "aeon":
+      return aeonCommand(args);
     case "--version":
     case "-v":
       console.log(VERSION);
@@ -139,6 +144,7 @@ Advanced:
   charon mcp wrap <name> -- <mcp-server-command>
   charon mcp config <name> -- <mcp-server-command>
   charon mcp proxy -- <mcp-server-command>
+  charon aeon map [--json] [--cwd <path>]
 
 Runtime policy enforcement for autonomous agents.
 `);

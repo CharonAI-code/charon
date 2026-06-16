@@ -50,6 +50,14 @@ export function loadMcpPolicy(file = "charon.yml"): RuntimePolicy {
     rules.push({ id: `controls.files.deny.${rules.length}`, verdict: "DENY", role: "read-path", includes: String(item).replace(/\/\*\*$/g, "") });
     rules.push({ id: `controls.files.write_deny.${rules.length}`, verdict: "DENY", role: "write-path", includes: String(item).replace(/\/\*\*$/g, "") });
   }
+  for (const item of raw?.controls?.files?.delete_deny || []) {
+    const value = String(item).replace(/\/\*\*$/g, "");
+    rules.push({ id: `controls.files.delete_deny.${rules.length}`, verdict: "DENY", role: "delete-path", includes: value });
+  }
+  if ((raw?.controls?.files?.delete_deny || []).length) {
+    rules.push({ id: `controls.files.delete_root.${rules.length}`, verdict: "DENY", role: "delete-path", equals: "." });
+    rules.push({ id: `controls.files.delete_root_slash.${rules.length}`, verdict: "DENY", role: "delete-path", equals: "./" });
+  }
   for (const item of raw?.controls?.files?.read || []) {
     rules.push({ id: `controls.files.read.${rules.length}`, verdict: "PASS", role: "read-path", includes: String(item).replace(/\/\*\*$/g, "") });
   }
