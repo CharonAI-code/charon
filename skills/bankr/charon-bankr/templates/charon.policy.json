@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "default": "PASS",
+  "allowlists": {
+    "recipients": [],
+    "chains": ["base", "ethereum", "polygon", "arbitrum", "bnb", "solana", "unichain", "worldchain"],
+    "domains": ["api.bankr.bot", "bankr.bot"]
+  },
+  "thresholds": {
+    "pause_amount_usd": 100,
+    "deny_amount_usd": 1000
+  },
+  "rules": [
+    {
+      "id": "deny-unsupported-chain",
+      "action": "*",
+      "verdict": "DENY",
+      "when": {
+        "chain_not_in": "$allowlists.chains",
+        "field_exists": "chain"
+      }
+    },
+    {
+      "id": "deny-large-wallet-action",
+      "action": ["wallet.transfer", "token.swap"],
+      "verdict": "DENY",
+      "when": {
+        "amount_usd_gt": "$thresholds.deny_amount_usd"
+      }
+    },
+    {
+      "id": "pause-medium-wallet-action",
+      "action": ["wallet.transfer", "token.swap"],
+      "verdict": "PAUSE",
+      "when": {
+        "amount_usd_gt": "$thresholds.pause_amount_usd"
+      }
+    },
+    {
+      "id": "pause-unknown-recipient",
+      "action": "wallet.transfer",
+      "verdict": "PAUSE",
+      "when": {
+        "recipient_not_in": "$allowlists.recipients",
+        "field_exists": "recipient"
+      }
+    },
+    {
+      "id": "pause-token-launch",
+      "action": "token.launch",
+      "verdict": "PAUSE",
+      "when": {}
+    },
+    {
+      "id": "pause-automation-create",
+      "action": "automation.create",
+      "verdict": "PAUSE",
+      "when": {}
+    },
+    {
+      "id": "deny-unknown-domain",
+      "action": ["api.request", "browser.open"],
+      "verdict": "DENY",
+      "when": {
+        "domain_not_in": "$allowlists.domains",
+        "field_exists": "domain"
+      }
+    }
+  ]
+}
