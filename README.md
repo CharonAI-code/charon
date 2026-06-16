@@ -1,199 +1,213 @@
 # Charon
 
-Charon is a local policy gate and receipt layer for autonomous agents.
+Runtime security for agent actions.
 
-It lets agents work inside defined bounds. Every action gets a simple decision:
+Charon is a local policy boundary for AI agents, MCP tools, and autonomous workflows. It receives attempted actions as typed data, evaluates local policy, runs inspection, enforces a verdict, and writes a signed receipt.
 
 ```txt
-PASS  -> run after policy check
-PAUSE -> wait for release review
-DENY  -> refuse before execution
+PASS  -> launch
+PAUSE -> queue for review
+DENY  -> block before launch
 ```
 
-Charon v1 is local-first and Aeon-first. It sits before risky agent actions,
-applies a programmable policy, scrubs blocked environment variables, writes
-verifiable receipts, and keeps paused actions in a local queue.
+## Why Charon
 
-## Why Charon Exists
+Agent instructions live inside model context. Tool output, repo content, web pages, and user messages can all influence that context.
 
-Agent instructions are soft. Runtime bounds are harder.
+Charon puts the enforcement point outside the agent reasoning path. The agent can request an action; Charon checks the action before execution.
 
-Charon sits before an agent action, evaluates it against `charon.yml`, and only
-lets passing actions execute.
+## Architecture
 
 ```mermaid
 flowchart LR
-  A["Aeon skill / agent command"] --> B["Charon Gate"]
-  B --> C["charon.yml bounds"]
-  C --> D{"PASS / PAUSE / DENY"}
-  D -->|PASS| E["Local command"]
-  D -->|PAUSE| F["Local queue"]
-  D -->|DENY| G["Receipt"]
-  E --> H["Agent run"]
-  H --> I["Receipt + history"]
+  A["Agent / MCP client"] --> B["Raw tool call"]
+  B --> C["ActionRequest"]
+  C --> D["Canonical resources"]
+  D --> E["Policy evaluation"]
+  E --> F["Inspection"]
+  F --> G{"Verdict"}
+  G -->|PASS| H["Launch action"]
+  G -->|PAUSE| I["Queue review"]
+  G -->|DENY| J["Block"]
+  H --> K["Signed receipt"]
+  I --> K
+  J --> K
 ```
+
+The runtime flow is:
+
+1. **Capture:** receive the raw tool call with tool name, args, and cwd.
+2. **Normalize:** convert it into an `ActionRequest`.
+3. **Canonicalize:** resolve paths, normalize URLs, extract domains, parse git remotes.
+4. **Evaluate:** run `charon.yml` rules in order. First match wins.
+5. **Inspect:** run detectors. Findings can escalate verdicts.
+6. **Decide:** return `PASS`, `PAUSE`, or `DENY`.
+7. **Record:** write a signed local receipt.
+
+## Charon Stack
+
+| Layer | What it does |
+| --- | --- |
+| `charon.yml` | Local policy: bounds, structured rules, controls, inspection mode |
+| Action layer | Converts raw tool calls into typed `ActionRequest` objects |
+| Resource registry | Classifies resources such as paths, URLs, secrets, shell commands, git remotes, MCP tools |
+| Policy engine | Applies ordered rules and default verdicts |
+| Inspection engine | Detects command chains, suspicious hosts, secrets, obfuscation, and bypass patterns |
+| Coordinator | Runs evaluate/enforce flow and builds receipts |
+| Receipts v2 | Signed, tamper-evident local records stored in `.charon/receipts/` |
+| MCP proxy | Wraps MCP servers so tool calls pass through Charon policy |
+| Codex enforcement | Disables native shell and routes commands through Charon MCP |
 
 ## Install
 
-Install Charon from this repo:
-
 ```bash
-npm install
-npm link
+npx github:CharonAI-code/charon setup
 ```
 
-Check your machine:
+This creates:
+
+- `charon.yml`
+- `.charon/identity.json`
+- `.charon/identity.key`
+- `.charon/receipts/`
+- `.charon/queue/`
+- global `charon` command
+
+Check the install:
 
 ```bash
 charon doctor
+charon status
 ```
 
-## Quick Start
+## Codex Enforcement
+
+Enable Codex enforcement from the repo you want protected:
 
 ```bash
-charon init
+charon enforce codex
+```
+
+Then restart Codex.
+
+What this does:
+
+- sets `shell_tool = false`
+- adds Charon as an MCP server in Codex config
+- binds Charon MCP to the current repo
+- routes shell execution through Charon policy
+
+Check or restore:
+
+```bash
+charon enforce status
+charon enforce restore
+```
+
+## Local Command Gate
+
+Run any command through policy:
+
+```bash
 charon gate -- npm test
-charon history latest
-charon verify latest
+charon gate -- git push origin main
+charon gate -- cat .env
 ```
 
-Actions can pass, pause, or deny:
+Use dry-run mode to evaluate without launching:
 
 ```bash
-charon gate -- git push
-charon queue
-charon approve <id>
-charon reject <id>
+charon gate --dry -- npm publish
 ```
 
-`charon run -- <command>` still works as a compatibility alias for
-`charon gate -- <command>`.
+## MCP Guard
 
-## Aeon
-
-Inside an Aeon repo:
+Wrap existing MCP servers through Charon:
 
 ```bash
-charon aeon init
-charon aeon enable
-charon aeon run <skill>
+charon mcp guard codex
+charon mcp status codex
+charon mcp unguard codex
 ```
 
-For local testing without Claude:
+Flow:
 
-```bash
-charon aeon run <skill> -- echo "charon works"
+```txt
+agent -> Charon MCP proxy -> charon.yml -> upstream MCP server
 ```
 
-Charon tags receipts with the Aeon skill name, policy hash, backend, command,
-env exposure list, denied env list, timestamps, and exit code.
+`PASS` forwards the call. `PAUSE` queues it. `DENY` blocks it before the upstream server receives the request.
 
 ## Policy
 
-`charon init` creates:
+`charon.yml` supports simple bounds and structured rules.
 
-```yaml
-version: 1
-bounds:
-  pass:
-    - npm test
-    - git diff
-    - git status
-    - echo
-  pause:
-    - git push
-    - gh release create
-    - deploy production
-    - terraform apply
-    - kubectl apply
-  deny:
-    - git push --force
-    - npm publish
-    - rm -rf
-    - read:.env
-    - read:~/.ssh/**
-sandbox:
-  backend: local
-  files:
-    read:
-      - .
-    write:
-      - .charon/**
-    deny:
-      - .env
-      - .env.*
-      - ~/.ssh/**
-      - ~/.aws/**
-      - ~/.config/gh/**
-  network:
-    allow:
-      - github.com
-      - api.github.com
-  commands:
-    deny:
-      - git push --force
-      - npm publish
-      - rm -rf
-  env:
-    expose: []
-    deny:
-      - ANTHROPIC_API_KEY
-      - CLAUDE_CODE_OAUTH_TOKEN
-      - GITHUB_TOKEN
-      - GH_TOKEN
-```
+The default policy is built for local development:
 
-Compile without running:
+| Action type | Default |
+| --- | --- |
+| normal local dev work | `PASS` |
+| tests, builds, lints | `PASS` |
+| git status, diff, log | `PASS` |
+| git push / release actions | `PAUSE` |
+| unknown network hosts | `PAUSE` |
+| `.env`, SSH keys, cloud creds | `DENY` |
+| `npm publish` | `DENY` |
+| `git push --force` | `DENY` |
+| destructive shell patterns | `DENY` |
+
+Inspection modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `enforce` | high findings become `DENY` |
+| `review` | high findings become `PAUSE` |
+| `observe` | findings are recorded without blocking |
+
+## Receipts
+
+Every decision writes a local receipt.
+
+Receipts include:
+
+- action
+- verdict
+- matched rule
+- policy hash
+- execution status
+- redactions
+- receipt hash
+- Ed25519 signature
+
+Commands:
 
 ```bash
-charon compile
-```
-
-## Commands
-
-```bash
-charon init
-charon doctor
-charon compile
-charon gate -- <command>
-charon queue
-charon approve <id>
-charon reject <id>
-charon history [list|latest|inspect <id|latest>]
-charon status <id|latest>
+charon receipts list
+charon receipts latest
+charon receipts inspect latest
+charon receipts explain latest
 charon verify latest
-charon aeon init
-charon aeon enable
-charon aeon run <skill>
 ```
 
-## Repository Structure
+Receipts are stored in `.charon/receipts/`. Secret-looking values are redacted before storage.
 
-```txt
-src/
-  cli/
-  core/
-    gate/
-    policy/
-    queue/
-    receipts/
-    sandbox/
-    security/
-  integrations/
-    aeon/
-  utils/
+## SDK
+
+```ts
+import { createCharon } from "charon";
+
+const charon = createCharon({ cwd: process.cwd() });
+
+const result = await charon.enforce(
+  {
+    runtime: "agent",
+    toolName: "filesystem.read",
+    args: { path: ".env" },
+  },
+  async () => {
+    return readFile(".env", "utf8");
+  }
+);
 ```
 
-## Scope
-
-Charon v1 is intentionally narrow:
-
-- macOS only
-- Aeon first
-- local action gate
-- local queue and receipts
-- no hosted service
-- no token
-- no marketplace
-
-See [ROADMAP.md](./ROADMAP.md) for the build plan.
+The executor only runs when Charon returns `PASS`.
