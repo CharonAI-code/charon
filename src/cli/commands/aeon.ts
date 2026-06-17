@@ -3,11 +3,74 @@
 
 const fs = require("fs");
 const path = require("path");
+const {
+  installAeonEnforcement,
+  readAeonEnforcementReport,
+  runAeonPreflight,
+} = require("../../aeon");
 
 function aeonCommand(args) {
   const [sub = "map", ...rest] = args;
   if (sub === "map" || sub === "status") return aeonMapCommand(rest);
-  throw new Error("usage: charon aeon map [--json] [--cwd <path>]");
+  if (sub === "preflight") return aeonPreflightCommand(rest);
+  throw new Error("usage: charon aeon map [--json] [--cwd <path>] | charon aeon preflight --skill <name>");
+}
+
+function aeonEnforceCommand(args = [], opts = {}) {
+  const [sub = "install", ...rest] = args;
+  if (sub && sub.startsWith("-")) return aeonEnforceCommand(["install", ...args], opts);
+  if (sub === "status") return aeonEnforceStatusCommand(rest, opts);
+  if (sub === "restore") throw new Error("charon enforce aeon restore is not implemented yet");
+  if (sub !== "install" && sub !== "aeon") throw new Error("usage: charon enforce aeon | charon enforce aeon status");
+  const cwd = flagValue(rest, "--cwd") || process.cwd();
+  const result = installAeonEnforcement({ cwd });
+  if (opts.quiet) return result;
+  console.log("Charon preflight enabled for Aeon.");
+  console.log(`Workflow: ${result.workflowPath}`);
+  console.log(`Policy: ${result.policyPath}`);
+  console.log(result.changed ? "Patched Aeon workflow." : "Aeon workflow already patched.");
+  aeonEnforceStatusCommand(["--cwd", cwd], opts);
+  return result;
+}
+
+function aeonEnforceStatusCommand(args = [], opts = {}) {
+  const cwd = flagValue(args, "--cwd") || process.cwd();
+  const report = readAeonEnforcementReport({ cwd });
+  if (opts.quiet) return report;
+  console.log("Charon Aeon enforcement");
+  console.log(`${report.workflowExists ? "OK " : "NO "} Aeon workflow exists`);
+  console.log(`${report.policyExists ? "OK " : "NO "} Aeon policy exists`);
+  console.log(`${report.policyValid ? "OK " : "NO "} Aeon policy valid${report.policyError ? ` - ${report.policyError}` : ""}`);
+  console.log(`${report.preflightInstalled ? "OK " : "NO "} Charon preflight installed`);
+  console.log(`${report.preflightCommandValid ? "OK " : "NO "} Charon preflight command valid`);
+  console.log(`${report.preflightBeforeClaude ? "OK " : "NO "} preflight runs before Claude`);
+  console.log(report.enforced ? "AEON ENFORCED" : "AEON NOT ENFORCED");
+  return report;
+}
+
+function aeonPreflightCommand(args) {
+  const input = {
+    cwd: flagValue(args, "--cwd") || process.cwd(),
+    skill: flagValue(args, "--skill") || process.env.SKILL || process.env.SKILL_NAME || "",
+    var: flagValue(args, "--var") || process.env.SKILL_VAR || "",
+    trigger: flagValue(args, "--trigger") || process.env.AEON_TRIGGER || process.env.GITHUB_EVENT_NAME || "unknown",
+    repo: flagValue(args, "--repo") || process.env.GITHUB_REPOSITORY || "",
+    runId: flagValue(args, "--run-id") || process.env.GITHUB_RUN_ID || "",
+    actor: flagValue(args, "--actor") || process.env.GITHUB_ACTOR || "",
+    policy: flagValue(args, "--policy"),
+  };
+  if (!input.skill) throw new Error("usage: charon aeon preflight --skill <name> [--var <value>] [--trigger <source>]");
+  const result = runAeonPreflight(input);
+  console.log(JSON.stringify({
+    verdict: result.verdict,
+    reason: result.reason,
+    ruleId: result.ruleId,
+    launched: false,
+    receiptPath: result.receiptPath,
+  }, null, 2));
+  if (result.verdict === "DENY") process.exitCode = 126;
+  if (result.verdict === "PAUSE") process.exitCode = 125;
+  return result;
 }
 
 function aeonMapCommand(args) {
@@ -199,4 +262,4 @@ function rel(root, file) {
   return path.relative(root, file) || ".";
 }
 
-module.exports = { aeonCommand, inspectAeonRuntime };
+module.exports = { aeonCommand, aeonEnforceCommand, inspectAeonRuntime };

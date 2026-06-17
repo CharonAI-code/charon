@@ -145,6 +145,7 @@ function resourcesFromObject(value: unknown): ActionResource[] {
     if (/^https?:\/\//i.test(child)) resources.push({ role: "fetch-url", value: child });
   });
   const text = typeof value === "string" ? value : JSON.stringify(value ?? {});
+  resources.push(...inferDeleteResourcesFromText(text));
   resources.push(...inferGitDeleteResourcesFromText(text));
   return resources;
 }
@@ -179,6 +180,12 @@ function inferDeleteResourcesFromText(text: string): ActionResource[] {
       roots.push(stripQuotes(token));
     }
     for (const root of roots.length ? roots : ["."]) resources.push({ role: "delete-path", value: root });
+  }
+  for (const match of text.matchAll(/\b(?:fs\.)?(?:rm|unlink|rmdir)\s*\(\s*["']([^"']+)["']/g)) {
+    resources.push({ role: "delete-path", value: match[1] });
+  }
+  for (const match of text.matchAll(/\b(?:rmSync|unlinkSync|rmdirSync)\s*\(\s*["']([^"']+)["']/g)) {
+    resources.push({ role: "delete-path", value: match[1] });
   }
   return resources;
 }

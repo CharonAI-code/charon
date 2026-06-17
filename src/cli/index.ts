@@ -134,6 +134,7 @@ Advanced:
   charon receipts explain <id|latest>
   charon verify <receipt|latest>
   charon enforce codex
+  charon enforce aeon
   charon enforce status
   charon enforce restore
   charon mcp server [--cwd <path>]

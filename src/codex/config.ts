@@ -111,8 +111,11 @@ export function setCodexHardening(config: string): string {
   output = setFeature(output, "browser_use_full_cdp_access", false);
   output = setFeature(output, "in_app_browser", false);
   output = removeSectionPath(output, ["plugins", "browser-bundled"]);
-  output = setPluginEnabled(output, "browser@openai-bundled", false);
-  output = setPluginMcpServerEnabled(output, "browser@openai-bundled", "node_repl", false);
+  output = disableNativeBypassServers(output);
+  for (const plugin of ["browser@openai-bundled", "chrome@openai-bundled", "computer-use@openai-bundled"]) {
+    output = setPluginEnabled(output, plugin, false);
+    output = setPluginMcpServerEnabled(output, plugin, "node_repl", false);
+  }
   output = setCharonPermissionProfile(output);
   return output;
 }

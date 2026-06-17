@@ -46,6 +46,10 @@ export interface EnforcementReport {
   configError?: string;
   shellDisabled: boolean;
   jsReplDisabled: boolean;
+  hooksEnabled: boolean;
+  hooksInstalled: boolean;
+  hooksTargetValid: boolean;
+  bundledBypassPlugins: number;
   nativeBypassMcp: number;
   charonInstalled: boolean;
   charonRequired: boolean;
@@ -232,6 +236,10 @@ export function enforcementReport(config: string, target: CharonMcpTarget): Enfo
       configError: error instanceof Error ? error.message : String(error),
       shellDisabled: false,
       jsReplDisabled: false,
+      hooksEnabled: false,
+      hooksInstalled: false,
+      hooksTargetValid: false,
+      bundledBypassPlugins: 0,
       nativeBypassMcp: 0,
       charonInstalled: false,
       charonRequired: false,
@@ -246,6 +254,7 @@ export function enforcementReport(config: string, target: CharonMcpTarget): Enfo
 
   const features = parsed.features || {};
   const mcpServers = parsed.mcp_servers || {};
+  const plugins = parsed.plugins || {};
   const charon = mcpServers.charon;
   const charonArgs = Array.isArray(charon?.args) ? charon.args.map(String) : [];
   const cwdIndex = charonArgs.indexOf("--cwd");
@@ -266,6 +275,10 @@ export function enforcementReport(config: string, target: CharonMcpTarget): Enfo
 
   const shellDisabled = features.shell_tool === false;
   const jsReplDisabled = features.js_repl === false;
+  const hooksEnabled = features.hooks === true;
+  const hooksInstalled = hasCharonHooks(config);
+  const hooksTargetValid = charonHooksTargetValid(config, target);
+  const bundledBypassPlugins = countBundledBypassPlugins(plugins);
   const charonInstalled = Boolean(charon);
   const charonRequired = charon?.required === true;
   const charonCommandValid = charon?.command === target.nodePath;
@@ -273,6 +286,10 @@ export function enforcementReport(config: string, target: CharonMcpTarget): Enfo
   const charonCwdValid = cwdIndex >= 0 && charonArgs[cwdIndex + 1] === target.cwd;
   const enforced = shellDisabled &&
     jsReplDisabled &&
+    hooksEnabled &&
+    hooksInstalled &&
+    hooksTargetValid &&
+    bundledBypassPlugins === 0 &&
     nativeBypassMcp === 0 &&
     charonInstalled &&
     charonRequired &&
@@ -285,6 +302,10 @@ export function enforcementReport(config: string, target: CharonMcpTarget): Enfo
     configValid: true,
     shellDisabled,
     jsReplDisabled,
+    hooksEnabled,
+    hooksInstalled,
+    hooksTargetValid,
+    bundledBypassPlugins,
     nativeBypassMcp,
     charonInstalled,
     charonRequired,
@@ -302,6 +323,10 @@ export function failedReportReasons(report: EnforcementReport): string[] {
   if (!report.configValid) reasons.push(report.configError || "invalid config");
   if (!report.shellDisabled) reasons.push("native shell enabled");
   if (!report.jsReplDisabled) reasons.push("local JS runtime enabled");
+  if (!report.hooksEnabled) reasons.push("hooks feature disabled");
+  if (!report.hooksInstalled) reasons.push("Charon hooks missing");
+  if (!report.hooksTargetValid) reasons.push("Charon hooks target invalid");
+  if (report.bundledBypassPlugins) reasons.push(`bundled bypass plugins enabled=${report.bundledBypassPlugins}`);
   if (report.nativeBypassMcp) reasons.push(`native bypass MCP open=${report.nativeBypassMcp}`);
   if (!report.charonInstalled) reasons.push("Charon MCP missing");
   if (!report.charonRequired) reasons.push("Charon MCP not required");
@@ -310,4 +335,38 @@ export function failedReportReasons(report: EnforcementReport): string[] {
   if (!report.charonCwdValid) reasons.push("Charon MCP cwd invalid");
   if (report.openMcp) reasons.push(`external MCP open=${report.openMcp}`);
   return reasons;
+}
+
+function hasCharonHooks(config: string): boolean {
+  return config.includes("# >>> charon hooks") &&
+    config.includes("# <<< charon hooks") &&
+    /codex\s+hook\s+pre-tool-use/.test(config) &&
+    /codex\s+hook\s+permission-request/.test(config) &&
+    /codex\s+hook\s+post-tool-use/.test(config);
+}
+
+function charonHooksTargetValid(config: string, target: CharonMcpTarget): boolean {
+  if (!hasCharonHooks(config)) return false;
+  const block = charonHooksBlock(config);
+  return block.includes(target.nodePath) && block.includes(target.cliPath);
+}
+
+function countBundledBypassPlugins(plugins: Record<string, any>): number {
+  let count = 0;
+  for (const name of ["browser@openai-bundled", "chrome@openai-bundled", "computer-use@openai-bundled"]) {
+    const plugin = plugins?.[name];
+    if (!plugin) continue;
+    const pluginOpen = plugin.enabled !== false;
+    const nodeRepl = plugin?.mcp_servers?.node_repl;
+    const nodeReplOpen = nodeRepl && nodeRepl.enabled !== false;
+    if (pluginOpen || nodeReplOpen) count += 1;
+  }
+  return count;
+}
+
+function charonHooksBlock(config: string): string {
+  const start = config.indexOf("# >>> charon hooks");
+  const end = config.indexOf("# <<< charon hooks", start);
+  if (start < 0 || end < 0) return "";
+  return config.slice(start, end);
 }

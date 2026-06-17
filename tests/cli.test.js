@@ -729,6 +729,74 @@ test("aeon map detects workflow tool bypass and hook points", () => {
   assert.ok(map.requiredHookPoints.some((hook) => hook.id === "claude.tools"));
 });
 
+test("aeon enforce installs preflight and policy idempotently", () => {
+  const cwd = aeonFixture();
+  const first = run(["enforce", "aeon"], { cwd });
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /Charon preflight enabled for Aeon/);
+  assert.match(first.stdout, /AEON ENFORCED/);
+  const workflow = fs.readFileSync(path.join(cwd, ".github", "workflows", "aeon.yml"), "utf8");
+  assert.equal((workflow.match(/# >>> charon aeon preflight/g) || []).length, 1);
+  assert.match(workflow, /npx -y github:CharonAI-code\/charon aeon preflight/);
+  assert.ok(workflow.indexOf("Charon preflight") < workflow.indexOf("Run pre-fetch scripts"));
+  assert.ok(workflow.indexOf("Charon preflight") < workflow.indexOf("claude -p"));
+  assert.ok(fs.existsSync(path.join(cwd, "charon.aeon.yml")));
+
+  const second = run(["enforce", "aeon"], { cwd });
+  assert.equal(second.status, 0, second.stderr);
+  const workflowAgain = fs.readFileSync(path.join(cwd, ".github", "workflows", "aeon.yml"), "utf8");
+  assert.equal((workflowAgain.match(/# >>> charon aeon preflight/g) || []).length, 1);
+});
+
+test("aeon enforce status fails closed when preflight is missing", () => {
+  const cwd = aeonFixture();
+  fs.writeFileSync(path.join(cwd, "charon.aeon.yml"), yaml.dump({ version: 1, defaultVerdict: "PASS", rules: [] }));
+  const status = run(["enforce", "aeon", "status"], { cwd });
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /NO  Charon preflight installed/);
+  assert.match(status.stdout, /AEON NOT ENFORCED/);
+});
+
+test("aeon preflight pauses high-risk skill and writes receipt", () => {
+  const cwd = aeonFixture();
+  assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
+  const result = run([
+    "aeon",
+    "preflight",
+    "--skill",
+    "external-feature",
+    "--var",
+    "owner/repo",
+    "--trigger",
+    "telegram-message",
+    "--repo",
+    "owner/aeon",
+    "--run-id",
+    "123",
+    "--actor",
+    "operator",
+  ], { cwd });
+  assert.equal(result.status, 125, result.stderr);
+  const out = JSON.parse(result.stdout);
+  assert.equal(out.verdict, "PAUSE");
+  assert.equal(out.ruleId, "aeon.external_feature.pause");
+  assert.equal(fs.existsSync(out.receiptPath), true);
+  const receipt = JSON.parse(fs.readFileSync(out.receiptPath, "utf8"));
+  assert.equal(receipt.action.runtime, "aeon");
+  assert.equal(receipt.execution.launched, false);
+  assert.equal(receipt.decision.verdict, "PAUSE");
+  assert.ok(receipt.action.resources.some((resource) => resource.value === "aeon.trigger:telegram-message"));
+});
+
+test("aeon preflight passes read-only skill", () => {
+  const cwd = aeonFixture();
+  assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
+  const result = run(["aeon", "preflight", "--skill", "digest", "--trigger", "schedule", "--repo", "owner/aeon"], { cwd });
+  assert.equal(result.status, 0, result.stderr);
+  const out = JSON.parse(result.stdout);
+  assert.equal(out.verdict, "PASS");
+});
+
 test("mcp config prints wrapped server config", () => {
   const result = run(["mcp", "config", "files", "--", "node", "server.js"], { cwd: tmpdir() });
   assert.equal(result.status, 0, result.stderr);
@@ -737,6 +805,70 @@ test("mcp config prints wrapped server config", () => {
   assert.match(config.mcpServers.files.args[0], /bin\/charon\.js$/);
   assert.deepEqual(config.mcpServers.files.args.slice(1), ["mcp", "proxy", "--", "node", "server.js"]);
 });
+
+function aeonFixture() {
+  const cwd = tmpdir();
+  fs.mkdirSync(path.join(cwd, ".github", "workflows"), { recursive: true });
+  fs.mkdirSync(path.join(cwd, "skills", "external-feature"), { recursive: true });
+  fs.mkdirSync(path.join(cwd, "skills", "digest"), { recursive: true });
+  fs.writeFileSync(path.join(cwd, "aeon.yml"), [
+    "skills:",
+    '  external-feature: { enabled: true, schedule: "workflow_dispatch", var: "" }',
+    '  digest: { enabled: true, schedule: "0 7 * * *" }',
+    "",
+  ].join("\n"));
+  fs.writeFileSync(path.join(cwd, "skills", "external-feature", "SKILL.md"), [
+    "---",
+    "name: external-feature",
+    "category: dev",
+    "description: Ship code to watched repos",
+    "commits: true",
+    "permissions:",
+    "  - contents:write",
+    "---",
+    "Ship the requested feature.",
+    "",
+  ].join("\n"));
+  fs.writeFileSync(path.join(cwd, "skills", "digest", "SKILL.md"), [
+    "---",
+    "name: digest",
+    "category: research",
+    "description: Read-only digest",
+    "---",
+    "Summarize the day.",
+    "",
+  ].join("\n"));
+  fs.writeFileSync(path.join(cwd, ".github", "workflows", "aeon.yml"), [
+    "name: Aeon",
+    "on:",
+    "  workflow_dispatch:",
+    "    inputs:",
+    "      skill:",
+    "        required: true",
+    "jobs:",
+    "  run:",
+    "    steps:",
+    "      - name: Determine skill",
+    "        id: skill",
+    "        run: echo \"name=${{ inputs.skill }}\" >> \"$GITHUB_OUTPUT\"",
+    "      - name: Check if there's work",
+    "        id: work",
+    "        run: echo \"mode=skill\" >> \"$GITHUB_OUTPUT\"",
+    "      - name: Setup Node.js",
+    "        uses: actions/setup-node@v5",
+    "      - name: Validate skill secrets",
+    "        run: echo ok",
+    "      - name: Run pre-fetch scripts",
+    "        run: echo prefetch",
+    "      - name: Run",
+    "        id: run",
+    "        run: |",
+    "          ALLOWED=\"Read,Write,Edit,WebFetch,WebSearch\"",
+    "          echo \"$PROMPT\" | claude -p - --allowedTools \"$ALLOWED\" --output-format json",
+    "",
+  ].join("\n"));
+  return cwd;
+}
 
 test("mcp config charon prints Charon-owned server config", () => {
   const cwd = tmpdir();

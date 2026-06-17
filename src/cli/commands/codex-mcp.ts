@@ -6,6 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { runCodexHook } = require("../../codex/hooks");
+const { aeonEnforceCommand } = require("./aeon");
 const { startMcpProxy, startMcpServer } = require("../../mcp");
 const {
   guardCodexMcp,
@@ -20,11 +21,12 @@ const {
 function enforceCommand(args) {
   const quiet = args.includes("--quiet");
   const filtered = args.filter((arg) => arg !== "--quiet");
-  const [sub] = filtered;
+  const [sub, ...rest] = filtered;
+  if (sub === "aeon") return aeonEnforceCommand(rest, { quiet });
   if (sub === "codex") return enforceCodexCommand({ quiet });
   if (sub === "restore") return enforceRestoreCommand({ quiet });
   if (sub === "status" || !sub) return enforceStatusCommand({ quiet });
-  throw new Error("usage: charon enforce codex | status | restore");
+  throw new Error("usage: charon enforce codex | aeon | status | restore");
 }
 
 function enforceCodexCommand(opts = {}) {
