@@ -818,12 +818,47 @@ test("aeon preflight pauses high-risk skill and writes receipt plus review", () 
   assert.match(githubOutputText, new RegExp(`charon_review_id=${out.reviewId}`));
   assert.match(githubOutputText, /charon_telegram_text<</);
 
+  const telegram = run(["aeon", "telegram", "payload", out.reviewId, "--chat-id", "12345"], { cwd });
+  assert.equal(telegram.status, 0, telegram.stderr);
+  const telegramPayload = JSON.parse(telegram.stdout);
+  assert.equal(telegramPayload.method, "sendMessage");
+  assert.equal(telegramPayload.chat_id, "12345");
+  assert.equal(telegramPayload.text.includes(out.reviewId), true);
+  assert.equal(telegramPayload.reply_markup.inline_keyboard[0][0].callback_data, `charon:approve:${out.reviewId}`);
+  assert.equal(telegramPayload.reply_markup.inline_keyboard[0][1].callback_data, `charon:reject:${out.reviewId}`);
+
   const approved = run(["aeon", "review", "approve", out.reviewId, "--actor", "operator"], { cwd });
   assert.equal(approved.status, 0, approved.stderr);
   assert.match(approved.stdout, /Approved Aeon review/);
   const approvedReview = JSON.parse(fs.readFileSync(out.reviewPath, "utf8"));
   assert.equal(approvedReview.status, "approved");
   assert.equal(approvedReview.decidedBy, "operator");
+});
+
+test("aeon telegram decision callback and text apply signed reviews", () => {
+  const cwd = aeonFixture();
+  assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
+
+  const first = run(["aeon", "preflight", "--skill", "external-feature", "--trigger", "telegram-message"], { cwd });
+  assert.equal(first.status, 125, first.stderr);
+  const firstOut = JSON.parse(first.stdout);
+  const approved = run(["aeon", "telegram", "decide", "--callback", `charon:approve:${firstOut.reviewId}`, "--actor", "alice"], { cwd });
+  assert.equal(approved.status, 0, approved.stderr);
+  const approvedOut = JSON.parse(approved.stdout);
+  assert.equal(approvedOut.decision, "approve");
+  assert.equal(approvedOut.applied, true);
+  assert.equal(approvedOut.status, "approved");
+  assert.equal(JSON.parse(fs.readFileSync(firstOut.reviewPath, "utf8")).decidedBy, "alice");
+
+  const second = run(["aeon", "preflight", "--skill", "external-feature", "--trigger", "telegram-message"], { cwd });
+  assert.equal(second.status, 125, second.stderr);
+  const secondOut = JSON.parse(second.stdout);
+  const rejected = run(["aeon", "telegram", "decide", "--text", `/charon reject ${secondOut.reviewId}`, "--actor", "bob"], { cwd });
+  assert.equal(rejected.status, 0, rejected.stderr);
+  const rejectedOut = JSON.parse(rejected.stdout);
+  assert.equal(rejectedOut.decision, "reject");
+  assert.equal(rejectedOut.status, "rejected");
+  assert.equal(JSON.parse(fs.readFileSync(secondOut.reviewPath, "utf8")).decidedBy, "bob");
 });
 
 test("aeon review verification fails when queue item is tampered", () => {

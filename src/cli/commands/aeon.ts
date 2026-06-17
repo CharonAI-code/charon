@@ -4,6 +4,8 @@
 const fs = require("fs");
 const path = require("path");
 const {
+  applyTelegramDecision,
+  buildTelegramPayload,
   decideAeonReview,
   exportAeonReview,
   installAeonEnforcement,
@@ -18,7 +20,8 @@ function aeonCommand(args) {
   if (sub === "map" || sub === "status") return aeonMapCommand(rest);
   if (sub === "preflight") return aeonPreflightCommand(rest);
   if (sub === "review" || sub === "reviews") return aeonReviewCommand(rest);
-  throw new Error("usage: charon aeon map [--json] [--cwd <path>] | charon aeon preflight --skill <name> | charon aeon review list|inspect|export|approve|reject");
+  if (sub === "telegram") return aeonTelegramCommand(rest);
+  throw new Error("usage: charon aeon map [--json] [--cwd <path>] | charon aeon preflight --skill <name> | charon aeon review list|inspect|export|approve|reject | charon aeon telegram payload|decide");
 }
 
 function aeonEnforceCommand(args = [], opts = {}) {
@@ -136,6 +139,39 @@ function aeonReviewCommand(args) {
     return result;
   }
   throw new Error("usage: charon aeon review list|inspect <id>|export <id|latest>|approve <id>|reject <id>");
+}
+
+function aeonTelegramCommand(args) {
+  const [sub = "payload", ...rest] = args;
+  const cwd = flagValue(rest, "--cwd") || process.cwd();
+  if (sub === "payload") {
+    const id = rest.find((arg) => !arg.startsWith("--")) || "latest";
+    const result = buildTelegramPayload({
+      cwd,
+      id,
+      chatId: flagValue(rest, "--chat-id"),
+    });
+    console.log(JSON.stringify(result.message, null, 2));
+    return result;
+  }
+  if (sub === "decide") {
+    const result = applyTelegramDecision({
+      cwd,
+      text: flagValue(rest, "--text"),
+      callback: flagValue(rest, "--callback"),
+      actor: flagValue(rest, "--actor"),
+      reason: flagValue(rest, "--reason"),
+    });
+    console.log(JSON.stringify({
+      decision: result.decision,
+      reviewId: result.reviewId,
+      applied: result.applied,
+      status: result.item ? result.item.status : undefined,
+      reviewPath: result.reviewPath,
+    }, null, 2));
+    return result;
+  }
+  throw new Error("usage: charon aeon telegram payload <id|latest> [--chat-id <id>] | charon aeon telegram decide --text <text>|--callback <data>");
 }
 
 function aeonMapCommand(args) {
