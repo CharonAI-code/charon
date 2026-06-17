@@ -136,7 +136,7 @@ Advanced:
   charon enforce codex
   charon enforce aeon
   charon aeon preflight --skill <name>
-  charon aeon review list|inspect|approve|reject
+  charon aeon review list|inspect|export|approve|reject
   charon enforce status
   charon enforce restore
   charon mcp server [--cwd <path>]

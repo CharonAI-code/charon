@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const {
   decideAeonReview,
+  exportAeonReview,
   installAeonEnforcement,
   listAeonReviews,
   loadAeonReview,
@@ -17,7 +18,7 @@ function aeonCommand(args) {
   if (sub === "map" || sub === "status") return aeonMapCommand(rest);
   if (sub === "preflight") return aeonPreflightCommand(rest);
   if (sub === "review" || sub === "reviews") return aeonReviewCommand(rest);
-  throw new Error("usage: charon aeon map [--json] [--cwd <path>] | charon aeon preflight --skill <name> | charon aeon review list|inspect|approve|reject");
+  throw new Error("usage: charon aeon map [--json] [--cwd <path>] | charon aeon preflight --skill <name> | charon aeon review list|inspect|export|approve|reject");
 }
 
 function aeonEnforceCommand(args = [], opts = {}) {
@@ -48,6 +49,7 @@ function aeonEnforceStatusCommand(args = [], opts = {}) {
   console.log(`${report.preflightInstalled ? "OK " : "NO "} Charon preflight installed`);
   console.log(`${report.preflightCommandValid ? "OK " : "NO "} Charon preflight command valid`);
   console.log(`${report.pauseReviewEnabled ? "OK " : "NO "} pause review queue enabled`);
+  console.log(`${report.reviewExportEnabled ? "OK " : "NO "} review export enabled`);
   console.log(`${report.preflightBeforeClaude ? "OK " : "NO "} preflight runs before Claude`);
   console.log(report.enforced ? "AEON ENFORCED" : "AEON NOT ENFORCED");
   return report;
@@ -104,6 +106,21 @@ function aeonReviewCommand(args) {
     console.log(JSON.stringify(review.item, null, 2));
     return review;
   }
+  if (sub === "export") {
+    const id = rest.find((arg) => !arg.startsWith("--")) || "latest";
+    const result = exportAeonReview({
+      cwd,
+      id,
+      githubOutput: flagValue(rest, "--github-output"),
+    });
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(result.payload, null, 2));
+    } else {
+      console.log(`Review JSON: ${result.jsonPath}`);
+      console.log(`Review summary: ${result.summaryPath}`);
+    }
+    return result;
+  }
   if (sub === "approve" || sub === "reject") {
     const id = rest.find((arg) => !arg.startsWith("--"));
     if (!id) throw new Error(`usage: charon aeon review ${sub} <id>`);
@@ -118,7 +135,7 @@ function aeonReviewCommand(args) {
     console.log(`Review: ${result.reviewPath}`);
     return result;
   }
-  throw new Error("usage: charon aeon review list|inspect <id>|approve <id>|reject <id>");
+  throw new Error("usage: charon aeon review list|inspect <id>|export <id|latest>|approve <id>|reject <id>");
 }
 
 function aeonMapCommand(args) {

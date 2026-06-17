@@ -739,6 +739,8 @@ test("aeon enforce installs preflight and policy idempotently", () => {
   assert.equal((workflow.match(/# >>> charon aeon preflight/g) || []).length, 1);
   assert.match(workflow, /npx -y github:CharonAI-code\/charon aeon preflight/);
   assert.match(workflow, /--review/);
+  assert.match(workflow, /charon aeon review export latest/);
+  assert.match(workflow, /GITHUB_STEP_SUMMARY/);
   assert.ok(workflow.indexOf("Charon preflight") < workflow.indexOf("Run pre-fetch scripts"));
   assert.ok(workflow.indexOf("Charon preflight") < workflow.indexOf("claude -p"));
   assert.ok(fs.existsSync(path.join(cwd, "charon.aeon.yml")));
@@ -756,6 +758,7 @@ test("aeon enforce status fails closed when preflight is missing", () => {
   assert.equal(status.status, 0, status.stderr);
   assert.match(status.stdout, /NO  Charon preflight installed/);
   assert.match(status.stdout, /NO  pause review queue enabled/);
+  assert.match(status.stdout, /NO  review export enabled/);
   assert.match(status.stdout, /AEON NOT ENFORCED/);
 });
 
@@ -802,6 +805,18 @@ test("aeon preflight pauses high-risk skill and writes receipt plus review", () 
   const list = run(["aeon", "review", "list"], { cwd });
   assert.equal(list.status, 0, list.stderr);
   assert.match(list.stdout, new RegExp(out.reviewId));
+
+  const githubOutput = path.join(cwd, "github-output.txt");
+  const exported = run(["aeon", "review", "export", "latest", "--json", "--github-output", githubOutput], { cwd });
+  assert.equal(exported.status, 0, exported.stderr);
+  const exportedPayload = JSON.parse(exported.stdout);
+  assert.equal(exportedPayload.reviewId, out.reviewId);
+  assert.equal(exportedPayload.telegram.includes(out.reviewId), true);
+  assert.equal(fs.existsSync(path.join(cwd, ".charon", "aeon", "exports", `${out.reviewId}.json`)), true);
+  assert.equal(fs.existsSync(path.join(cwd, ".charon", "aeon", "exports", `${out.reviewId}.md`)), true);
+  const githubOutputText = fs.readFileSync(githubOutput, "utf8");
+  assert.match(githubOutputText, new RegExp(`charon_review_id=${out.reviewId}`));
+  assert.match(githubOutputText, /charon_telegram_text<</);
 
   const approved = run(["aeon", "review", "approve", out.reviewId, "--actor", "operator"], { cwd });
   assert.equal(approved.status, 0, approved.stderr);

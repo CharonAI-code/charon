@@ -31,6 +31,7 @@ function readAeonEnforcementReport(input = {}) {
   const preflightInstalled = workflow.includes(PREFLIGHT_START) && workflow.includes(PREFLIGHT_END);
   const preflightCommandValid = /charon\s+aeon\s+preflight/.test(workflow) && /--policy\s+charon\.aeon\.yml/.test(workflow);
   const pauseReviewEnabled = /--review/.test(workflow);
+  const reviewExportEnabled = /charon\s+aeon\s+review\s+export\s+latest/.test(workflow) && /GITHUB_STEP_SUMMARY/.test(workflow);
   const beforeClaude = workflow.indexOf(PREFLIGHT_START) >= 0 && workflow.indexOf("claude -p") >= 0
     ? workflow.indexOf(PREFLIGHT_START) < workflow.indexOf("claude -p")
     : false;
@@ -53,8 +54,9 @@ function readAeonEnforcementReport(input = {}) {
     preflightInstalled,
     preflightCommandValid,
     pauseReviewEnabled,
+    reviewExportEnabled,
     preflightBeforeClaude: beforeClaude,
-    enforced: fs.existsSync(workflowPath) && policyExists && policyValid && preflightInstalled && preflightCommandValid && pauseReviewEnabled && beforeClaude,
+    enforced: fs.existsSync(workflowPath) && policyExists && policyValid && preflightInstalled && preflightCommandValid && pauseReviewEnabled && reviewExportEnabled && beforeClaude,
     workflowPath,
     policyPath,
   };
@@ -98,6 +100,12 @@ function preflightBlock() {
     "            --actor \"$AEON_ACTOR\" \\",
     "            --policy charon.aeon.yml \\",
     "            --review",
+    "      - name: Charon review export",
+    "        if: always()",
+    "        id: charon_review",
+    "        run: |",
+    "          npx -y github:CharonAI-code/charon aeon review export latest --github-output \"$GITHUB_OUTPUT\" || true",
+    "          for file in .charon/aeon/exports/*.md; do [ -f \"$file\" ] && cat \"$file\" >> \"$GITHUB_STEP_SUMMARY\"; done",
     `      ${PREFLIGHT_END}`,
     "",
   ].join("\n");

@@ -4,7 +4,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { REVIEWS_DIR, TELEGRAM_DIR } = require("./constants");
+const { EXPORTS_DIR, REVIEWS_DIR, TELEGRAM_DIR } = require("./constants");
 
 function createAeonReview(input) {
   if (input.decision.verdict !== "PAUSE") return null;
@@ -70,6 +70,58 @@ function decideAeonReview(input) {
   return { item: signed, reviewPath };
 }
 
+function exportAeonReview(input = {}) {
+  const cwd = path.resolve(input.cwd || process.cwd());
+  const target = input.id || "latest";
+  const loaded = target === "latest" ? latestAeonReview({ cwd }) : loadAeonReview({ cwd, id: target });
+  const item = loaded.item;
+  const payload = {
+    schema: "charon.aeonReviewExport.v1",
+    exportedAt: new Date().toISOString(),
+    reviewId: item.id,
+    status: item.status,
+    verdict: item.decision.verdict,
+    reason: item.decision.reason,
+    ruleId: item.decision.ruleId,
+    skill: item.source.skill,
+    trigger: item.source.trigger,
+    repo: item.source.repo,
+    runId: item.source.runId,
+    actor: item.source.actor,
+    receiptPath: item.receiptPath,
+    receiptHash: item.receiptHash,
+    reviewPath: loaded.path,
+    links: item.links || {},
+    telegram: item.telegram,
+    commands: {
+      approve: `charon aeon review approve ${item.id}`,
+      reject: `charon aeon review reject ${item.id}`,
+      inspect: `charon aeon review inspect ${item.id}`,
+    },
+  };
+  const dir = path.join(cwd, EXPORTS_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  const jsonPath = path.join(dir, `${item.id}.json`);
+  const summaryPath = path.join(dir, `${item.id}.md`);
+  fs.writeFileSync(jsonPath, `${JSON.stringify(payload, null, 2)}\n`);
+  fs.writeFileSync(summaryPath, `${reviewSummary(payload)}\n`);
+  if (input.githubOutput) appendGithubOutput(input.githubOutput, {
+    charon_review_id: payload.reviewId,
+    charon_review_status: payload.status,
+    charon_review_json: jsonPath,
+    charon_review_summary: summaryPath,
+    charon_telegram_text: item.telegram,
+  });
+  return { payload, jsonPath, summaryPath };
+}
+
+function latestAeonReview(input = {}) {
+  const cwd = path.resolve(input.cwd || process.cwd());
+  const files = reviewFiles(cwd);
+  if (!files.length) throw new Error("no Aeon reviews found");
+  return loadAeonReview({ cwd, id: path.basename(files[0], ".json") });
+}
+
 function reviewFiles(cwd) {
   const dir = path.join(cwd, REVIEWS_DIR);
   if (!fs.existsSync(dir)) return [];
@@ -77,6 +129,42 @@ function reviewFiles(cwd) {
     .filter((file) => file.endsWith(".json"))
     .map((file) => path.join(dir, file))
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+}
+
+function reviewSummary(payload) {
+  const lines = [
+    "# Charon Aeon Review",
+    "",
+    `Review: ${payload.reviewId}`,
+    `Status: ${payload.status}`,
+    `Skill: ${payload.skill || "unknown"}`,
+    `Verdict: ${payload.verdict}`,
+    `Reason: ${payload.reason || "policy pause"}`,
+  ];
+  if (payload.links.githubRun) lines.push(`Run: ${payload.links.githubRun}`);
+  lines.push("");
+  lines.push("Telegram");
+  lines.push("");
+  lines.push("```");
+  lines.push(payload.telegram || "");
+  lines.push("```");
+  return lines.join("\n");
+}
+
+function appendGithubOutput(file, values) {
+  const lines = [];
+  for (const [key, value] of Object.entries(values)) {
+    const text = String(value || "");
+    if (text.includes("\n")) {
+      const marker = `CHARON_${crypto.randomBytes(4).toString("hex")}`;
+      lines.push(`${key}<<${marker}`);
+      lines.push(text);
+      lines.push(marker);
+    } else {
+      lines.push(`${key}=${text}`);
+    }
+  }
+  fs.appendFileSync(file, `${lines.join("\n")}\n`);
 }
 
 function writeReview(cwd, item) {
@@ -173,5 +261,7 @@ module.exports = {
   createAeonReview,
   listAeonReviews,
   loadAeonReview,
+  latestAeonReview,
+  exportAeonReview,
   decideAeonReview,
 };
