@@ -135,6 +135,7 @@ Advanced:
   charon verify <receipt|latest>
   charon enforce codex
   charon enforce aeon
+  charon aeon smoke [--json]
   charon aeon preflight --skill <name>
   charon aeon review list|inspect|export|approve|reject
   charon enforce status

@@ -7,6 +7,7 @@ module.exports = {
   ...require("./action"),
   ...require("./preflight"),
   ...require("./review"),
+  ...require("./smoke"),
   ...require("./telegram"),
   ...require("./workflow"),
 };

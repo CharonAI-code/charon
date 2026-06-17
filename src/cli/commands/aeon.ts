@@ -12,6 +12,7 @@ const {
   listAeonReviews,
   loadAeonReview,
   readAeonEnforcementReport,
+  runAeonSmoke,
   runAeonPreflight,
 } = require("../../aeon");
 
@@ -21,7 +22,8 @@ function aeonCommand(args) {
   if (sub === "preflight") return aeonPreflightCommand(rest);
   if (sub === "review" || sub === "reviews") return aeonReviewCommand(rest);
   if (sub === "telegram") return aeonTelegramCommand(rest);
-  throw new Error("usage: charon aeon map [--json] [--cwd <path>] | charon aeon preflight --skill <name> | charon aeon review list|inspect|export|approve|reject | charon aeon telegram payload|decide");
+  if (sub === "smoke") return aeonSmokeCommand(rest);
+  throw new Error("usage: charon aeon map [--json] [--cwd <path>] | charon aeon smoke [--json] | charon aeon preflight --skill <name> | charon aeon review list|inspect|export|approve|reject | charon aeon telegram payload|decide");
 }
 
 function aeonEnforceCommand(args = [], opts = {}) {
@@ -172,6 +174,28 @@ function aeonTelegramCommand(args) {
     return result;
   }
   throw new Error("usage: charon aeon telegram payload <id|latest> [--chat-id <id>] | charon aeon telegram decide --text <text>|--callback <data>");
+}
+
+function aeonSmokeCommand(args) {
+  const result = runAeonSmoke({
+    cwd: flagValue(args, "--cwd") || process.cwd(),
+    passSkill: flagValue(args, "--pass-skill"),
+    pauseSkill: flagValue(args, "--pause-skill"),
+    repo: flagValue(args, "--repo"),
+    actor: flagValue(args, "--actor"),
+    chatId: flagValue(args, "--chat-id"),
+  });
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log("Charon Aeon smoke");
+    for (const item of result.checks) {
+      console.log(`${item.ok ? "OK " : "NO "} ${item.id}`);
+    }
+    console.log(result.ok ? "AEON MVP SMOKE PASS" : "AEON MVP SMOKE FAIL");
+  }
+  if (!result.ok) process.exitCode = 1;
+  return result;
 }
 
 function aeonMapCommand(args) {

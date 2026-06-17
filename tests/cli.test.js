@@ -861,6 +861,33 @@ test("aeon telegram decision callback and text apply signed reviews", () => {
   assert.equal(JSON.parse(fs.readFileSync(secondOut.reviewPath, "utf8")).decidedBy, "bob");
 });
 
+test("aeon smoke validates MVP chain end to end", () => {
+  const cwd = aeonFixture();
+  const smoke = run(["aeon", "smoke", "--json"], { cwd });
+  assert.equal(smoke.status, 0, smoke.stderr);
+  const result = JSON.parse(smoke.stdout);
+  assert.equal(result.schema, "charon.aeonSmoke.v1");
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.checks.map((item) => item.id), [
+    "enforcement",
+    "pass-preflight",
+    "pause-preflight",
+    "review-export",
+    "telegram-payload",
+    "telegram-decision",
+  ]);
+  assert.equal(result.checks.every((item) => item.ok), true);
+  const reviews = fs.readdirSync(path.join(cwd, ".charon", "aeon", "reviews")).filter((file) => file.endsWith(".json"));
+  assert.equal(reviews.length, 1);
+  const review = JSON.parse(fs.readFileSync(path.join(cwd, ".charon", "aeon", "reviews", reviews[0]), "utf8"));
+  assert.equal(review.status, "rejected");
+  assert.equal(review.decidedBy, "charon-smoke");
+
+  const text = run(["aeon", "smoke"], { cwd: aeonFixture() });
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /AEON MVP SMOKE PASS/);
+});
+
 test("aeon review verification fails when queue item is tampered", () => {
   const cwd = aeonFixture();
   assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
