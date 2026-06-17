@@ -105,7 +105,9 @@ function preflightBlock() {
     "        id: charon_review",
     "        run: |",
     "          npx -y github:CharonAI-code/charon aeon review export latest --github-output \"$GITHUB_OUTPUT\" || true",
-    "          for file in .charon/aeon/exports/*.md; do [ -f \"$file\" ] && cat \"$file\" >> \"$GITHUB_STEP_SUMMARY\"; done",
+    "          for file in .charon/aeon/exports/*.md; do",
+    "            if [ -f \"$file\" ]; then cat \"$file\" >> \"$GITHUB_STEP_SUMMARY\"; fi",
+    "          done",
     `      ${PREFLIGHT_END}`,
     "",
   ].join("\n");
