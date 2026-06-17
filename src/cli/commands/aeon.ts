@@ -4,7 +4,10 @@
 const fs = require("fs");
 const path = require("path");
 const {
+  decideAeonReview,
   installAeonEnforcement,
+  listAeonReviews,
+  loadAeonReview,
   readAeonEnforcementReport,
   runAeonPreflight,
 } = require("../../aeon");
@@ -13,7 +16,8 @@ function aeonCommand(args) {
   const [sub = "map", ...rest] = args;
   if (sub === "map" || sub === "status") return aeonMapCommand(rest);
   if (sub === "preflight") return aeonPreflightCommand(rest);
-  throw new Error("usage: charon aeon map [--json] [--cwd <path>] | charon aeon preflight --skill <name>");
+  if (sub === "review" || sub === "reviews") return aeonReviewCommand(rest);
+  throw new Error("usage: charon aeon map [--json] [--cwd <path>] | charon aeon preflight --skill <name> | charon aeon review list|inspect|approve|reject");
 }
 
 function aeonEnforceCommand(args = [], opts = {}) {
@@ -43,6 +47,7 @@ function aeonEnforceStatusCommand(args = [], opts = {}) {
   console.log(`${report.policyValid ? "OK " : "NO "} Aeon policy valid${report.policyError ? ` - ${report.policyError}` : ""}`);
   console.log(`${report.preflightInstalled ? "OK " : "NO "} Charon preflight installed`);
   console.log(`${report.preflightCommandValid ? "OK " : "NO "} Charon preflight command valid`);
+  console.log(`${report.pauseReviewEnabled ? "OK " : "NO "} pause review queue enabled`);
   console.log(`${report.preflightBeforeClaude ? "OK " : "NO "} preflight runs before Claude`);
   console.log(report.enforced ? "AEON ENFORCED" : "AEON NOT ENFORCED");
   return report;
@@ -58,6 +63,7 @@ function aeonPreflightCommand(args) {
     runId: flagValue(args, "--run-id") || process.env.GITHUB_RUN_ID || "",
     actor: flagValue(args, "--actor") || process.env.GITHUB_ACTOR || "",
     policy: flagValue(args, "--policy"),
+    review: !args.includes("--no-review"),
   };
   if (!input.skill) throw new Error("usage: charon aeon preflight --skill <name> [--var <value>] [--trigger <source>]");
   const result = runAeonPreflight(input);
@@ -67,10 +73,52 @@ function aeonPreflightCommand(args) {
     ruleId: result.ruleId,
     launched: false,
     receiptPath: result.receiptPath,
+    reviewId: result.review ? result.review.id : undefined,
+    reviewPath: result.review ? result.review.reviewPath : undefined,
+    telegramPath: result.review ? result.review.telegramPath : undefined,
   }, null, 2));
   if (result.verdict === "DENY") process.exitCode = 126;
   if (result.verdict === "PAUSE") process.exitCode = 125;
   return result;
+}
+
+function aeonReviewCommand(args) {
+  const [sub = "list", ...rest] = args;
+  const cwd = flagValue(rest, "--cwd") || process.cwd();
+  if (sub === "list") {
+    const reviews = listAeonReviews({ cwd });
+    if (!reviews.length) {
+      console.log("No Aeon reviews.");
+      return reviews;
+    }
+    for (const review of reviews) {
+      const item = review.item;
+      console.log(`${item.id}  ${item.status}  ${item.source.skill || "unknown"}  ${item.decision.reason || ""}`);
+    }
+    return reviews;
+  }
+  if (sub === "inspect") {
+    const id = rest.find((arg) => !arg.startsWith("--"));
+    if (!id) throw new Error("usage: charon aeon review inspect <id>");
+    const review = loadAeonReview({ cwd, id });
+    console.log(JSON.stringify(review.item, null, 2));
+    return review;
+  }
+  if (sub === "approve" || sub === "reject") {
+    const id = rest.find((arg) => !arg.startsWith("--"));
+    if (!id) throw new Error(`usage: charon aeon review ${sub} <id>`);
+    const result = decideAeonReview({
+      cwd,
+      id,
+      decision: sub === "approve" ? "approve" : "reject",
+      actor: flagValue(rest, "--actor"),
+      reason: flagValue(rest, "--reason"),
+    });
+    console.log(`${sub === "approve" ? "Approved" : "Rejected"} Aeon review ${id}`);
+    console.log(`Review: ${result.reviewPath}`);
+    return result;
+  }
+  throw new Error("usage: charon aeon review list|inspect <id>|approve <id>|reject <id>");
 }
 
 function aeonMapCommand(args) {

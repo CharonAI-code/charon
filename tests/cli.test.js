@@ -738,6 +738,7 @@ test("aeon enforce installs preflight and policy idempotently", () => {
   const workflow = fs.readFileSync(path.join(cwd, ".github", "workflows", "aeon.yml"), "utf8");
   assert.equal((workflow.match(/# >>> charon aeon preflight/g) || []).length, 1);
   assert.match(workflow, /npx -y github:CharonAI-code\/charon aeon preflight/);
+  assert.match(workflow, /--review/);
   assert.ok(workflow.indexOf("Charon preflight") < workflow.indexOf("Run pre-fetch scripts"));
   assert.ok(workflow.indexOf("Charon preflight") < workflow.indexOf("claude -p"));
   assert.ok(fs.existsSync(path.join(cwd, "charon.aeon.yml")));
@@ -754,10 +755,11 @@ test("aeon enforce status fails closed when preflight is missing", () => {
   const status = run(["enforce", "aeon", "status"], { cwd });
   assert.equal(status.status, 0, status.stderr);
   assert.match(status.stdout, /NO  Charon preflight installed/);
+  assert.match(status.stdout, /NO  pause review queue enabled/);
   assert.match(status.stdout, /AEON NOT ENFORCED/);
 });
 
-test("aeon preflight pauses high-risk skill and writes receipt", () => {
+test("aeon preflight pauses high-risk skill and writes receipt plus review", () => {
   const cwd = aeonFixture();
   assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
   const result = run([
@@ -781,11 +783,46 @@ test("aeon preflight pauses high-risk skill and writes receipt", () => {
   assert.equal(out.verdict, "PAUSE");
   assert.equal(out.ruleId, "aeon.external_feature.pause");
   assert.equal(fs.existsSync(out.receiptPath), true);
+  assert.match(out.reviewId, /^ar-/);
+  assert.equal(fs.existsSync(out.reviewPath), true);
+  assert.equal(fs.existsSync(out.telegramPath), true);
   const receipt = JSON.parse(fs.readFileSync(out.receiptPath, "utf8"));
   assert.equal(receipt.action.runtime, "aeon");
   assert.equal(receipt.execution.launched, false);
   assert.equal(receipt.decision.verdict, "PAUSE");
   assert.ok(receipt.action.resources.some((resource) => resource.value === "aeon.trigger:telegram-message"));
+
+  const review = JSON.parse(fs.readFileSync(out.reviewPath, "utf8"));
+  assert.equal(review.schema, "charon.aeonReview.v1");
+  assert.equal(review.status, "paused");
+  assert.equal(review.source.skill, "external-feature");
+  assert.equal(review.receiptHash, receipt.receiptHash);
+  assert.match(fs.readFileSync(out.telegramPath, "utf8"), new RegExp(out.reviewId));
+
+  const list = run(["aeon", "review", "list"], { cwd });
+  assert.equal(list.status, 0, list.stderr);
+  assert.match(list.stdout, new RegExp(out.reviewId));
+
+  const approved = run(["aeon", "review", "approve", out.reviewId, "--actor", "operator"], { cwd });
+  assert.equal(approved.status, 0, approved.stderr);
+  assert.match(approved.stdout, /Approved Aeon review/);
+  const approvedReview = JSON.parse(fs.readFileSync(out.reviewPath, "utf8"));
+  assert.equal(approvedReview.status, "approved");
+  assert.equal(approvedReview.decidedBy, "operator");
+});
+
+test("aeon review verification fails when queue item is tampered", () => {
+  const cwd = aeonFixture();
+  assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
+  const result = run(["aeon", "preflight", "--skill", "external-feature", "--trigger", "telegram-message"], { cwd });
+  assert.equal(result.status, 125, result.stderr);
+  const out = JSON.parse(result.stdout);
+  const review = JSON.parse(fs.readFileSync(out.reviewPath, "utf8"));
+  review.decision.reason = "tampered";
+  fs.writeFileSync(out.reviewPath, `${JSON.stringify(review, null, 2)}\n`);
+  const inspect = run(["aeon", "review", "inspect", out.reviewId], { cwd });
+  assert.notEqual(inspect.status, 0);
+  assert.match(inspect.stderr, /verification failed/);
 });
 
 test("aeon preflight passes read-only skill", () => {
