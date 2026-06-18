@@ -10,6 +10,7 @@ function defaultAeonPolicy() {
       pause: [],
       deny: [],
       rules: [
+        { id: "aeon.intent_delete.deny", verdict: "DENY", role: "delete-path", includes: "." },
         { id: "aeon.workflow_write.pause", verdict: "PAUSE", role: "write-path", includes: "" },
         { id: "aeon.external_feature.pause", verdict: "PAUSE", role: "mcp-tool", includes: "aeon.skill:external-feature" },
         { id: "aeon.auto_merge.pause", verdict: "PAUSE", role: "mcp-tool", includes: "aeon.skill:auto-merge" },

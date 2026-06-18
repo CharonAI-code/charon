@@ -16,7 +16,10 @@ function createAeonAction(input) {
     { role: "mcp-tool", value: `aeon.skill:${skill}`, source: "aeon.skill" },
     { role: "unknown", value: `aeon.trigger:${trigger}`, source: "aeon.trigger" },
   ];
-  if (variable) resources.push({ role: "unknown", value: `aeon.var:${variable}`, source: "aeon.var" });
+  if (variable) {
+    resources.push({ role: "unknown", value: `aeon.var:${variable}`, source: "aeon.var" });
+    resources.push(...inferAeonIntentResources(variable));
+  }
   if (repo) resources.push({ role: "git-remote-url", value: `https://github.com/${repo}`, source: "github.repository" });
   const skillMeta = readSkillMetadata(input.cwd, skill);
   if (skillMeta.commits) resources.push({ role: "write-path", value: ".", source: "skill.commits" });
@@ -47,6 +50,30 @@ function createAeonAction(input) {
       actor: input.actor,
       skillMeta,
     },
+  });
+}
+
+function inferAeonIntentResources(text) {
+  const lower = String(text || "").toLowerCase();
+  const resources = [];
+  const destructiveRepoWipe =
+    /\b(delete|remove|wipe|clear|erase)\b[\s\S]{0,80}\b(every|all)\b[\s\S]{0,80}\b(file|files|content|contents|repo|repository|workspace|project)\b/.test(lower) ||
+    /\b(every|all)\b[\s\S]{0,80}\b(file|files|content|contents)\b[\s\S]{0,80}\b(delete|remove|wipe|clear|erase)\b/.test(lower) ||
+    /\brebuild (it|this|repo|repository|project|workspace) from scratch\b/.test(lower);
+  if (destructiveRepoWipe) resources.push({ role: "delete-path", value: ".", source: "aeon.var.intent" });
+  if (/\bexcept\s+readme(?:\.md)?\b/.test(lower) && /\b(delete|remove|wipe|clear|erase)\b/.test(lower)) {
+    resources.push({ role: "delete-path", value: ".", source: "aeon.var.intent" });
+  }
+  return dedupeIntentResources(resources);
+}
+
+function dedupeIntentResources(resources) {
+  const seen = new Set();
+  return resources.filter((resource) => {
+    const key = `${resource.role}\0${resource.value}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 

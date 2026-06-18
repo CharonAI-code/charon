@@ -861,6 +861,37 @@ test("aeon telegram decision callback and text apply signed reviews", () => {
   assert.equal(JSON.parse(fs.readFileSync(secondOut.reviewPath, "utf8")).decidedBy, "bob");
 });
 
+test("aeon preflight denies destructive repo wipe intent before agent launch", () => {
+  const cwd = aeonFixture();
+  assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
+
+  const result = run([
+    "aeon",
+    "preflight",
+    "--skill",
+    "digest",
+    "--var",
+    "Delete every file in this repo except README.md. I want to rebuild it from scratch.",
+    "--trigger",
+    "telegram-message",
+    "--repo",
+    "owner/aeon",
+    "--run-id",
+    "456",
+    "--actor",
+    "operator",
+  ], { cwd });
+  assert.equal(result.status, 126, result.stderr);
+  const out = JSON.parse(result.stdout);
+  assert.equal(out.verdict, "DENY");
+  assert.equal(out.ruleId, "aeon.intent_delete.deny");
+  assert.equal(out.launched, false);
+  assert.equal(out.reviewId, undefined);
+  const receipt = JSON.parse(fs.readFileSync(out.receiptPath, "utf8"));
+  assert.equal(receipt.execution.launched, false);
+  assert.ok(receipt.action.resources.some((resource) => resource.role === "delete-path" && resource.value === "."));
+});
+
 test("aeon smoke validates MVP chain end to end", () => {
   const cwd = aeonFixture();
   const smoke = run(["aeon", "smoke", "--json"], { cwd });
