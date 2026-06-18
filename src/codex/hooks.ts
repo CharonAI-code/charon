@@ -3,6 +3,7 @@ import { ActionCoordinator } from "../trusted-process";
 import type { ActionResource } from "../action";
 import { InspectionSession } from "../inspection";
 import { loadMcpPolicy } from "../mcp/policy";
+import { writeMcpReceipt } from "../mcp/receipts";
 
 type CodexHookEvent = "PreToolUse" | "PermissionRequest" | "PostToolUse";
 
@@ -36,6 +37,14 @@ export async function runCodexHook(kind: string, input = process.stdin, output =
       permissionMode: payload.permission_mode,
     },
   });
+
+  if (result.decision.verdict !== "PASS") {
+    try {
+      writeMcpReceipt(result.receipt, resolve(cwd, ".charon", "receipts"));
+    } catch {
+      // Hook output must stay policy-shaped even if receipt persistence fails.
+    }
+  }
 
   if (result.decision.verdict === "PASS") {
     return 0;
@@ -100,9 +109,11 @@ function resourcesForHook(toolName: string, payload: CodexHookPayload): ActionRe
     resources.push(...resourcesFromPatch(command));
   } else if (toolName.startsWith("mcp__")) {
     resources.push({ role: "mcp-tool", value: toolName });
+    if (command) resources.push({ role: "mcp-tool", value: command });
     resources.push(...resourcesFromObject(input));
   } else {
     resources.push({ role: "mcp-tool", value: toolName });
+    if (command) resources.push({ role: "mcp-tool", value: command });
     resources.push(...resourcesFromObject(input));
   }
 

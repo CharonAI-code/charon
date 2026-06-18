@@ -38,7 +38,8 @@ export function inferResources(input: RawToolCall, cwd = process.cwd()): ActionR
     resources.push(resource("delete-path", value, "tool.args", cwd));
   }
 
-  if (toolName.includes("mcp") || toolName.includes(".")) {
+  if (input.runtime === "mcp" || toolName.includes("mcp") || toolName.includes(".")) {
+    if (argsText) resources.push(resource("mcp-tool", argsText, "tool.args", cwd));
     resources.push(resource("mcp-tool", input.toolName, "tool.name", cwd));
   }
 

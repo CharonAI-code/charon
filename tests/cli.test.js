@@ -110,6 +110,27 @@ test("setup wires Codex enforcement by default", () => {
   assert.match(config, /# charon\.guarded = true/);
 });
 
+test("interlock setup writes Base MCP policy and watcher", () => {
+  const cwd = tmpdir();
+  const result = run(["interlock", "setup", "--no-codex"], { cwd });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Interlock Base MCP test ready/);
+  assert.match(result.stdout, /Codex: skipped/);
+
+  const policy = fs.readFileSync(path.join(cwd, "charon.yml"), "utf8");
+  assert.match(policy, /mode: interlock-base-mcp/);
+  assert.match(policy, /base\.permit2_lower\.deny/);
+  assert.match(policy, /base\.high_slippage\.deny/);
+
+  const watcher = fs.readFileSync(path.join(cwd, "scripts", "charon-mcp-watch.js"), "utf8");
+  assert.match(watcher, /CHARON INTERLOCK/);
+  assert.match(watcher, /Base MCP live audit/);
+
+  const prompts = fs.readFileSync(path.join(cwd, "DEMO_PROMPTS.md"), "utf8");
+  assert.match(prompts, /Permit2 typed data/);
+  assert.match(prompts, /50% slippage/);
+});
+
 test("selftest passes with local runtime", () => {
   const cwd = tmpdir();
   assert.equal(run(["setup", "--local", "--no-global"], { cwd }).status, 0);

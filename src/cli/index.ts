@@ -14,6 +14,7 @@ const { createTrustedReceipt, verifyTrustedReceipt } = require("../trusted-proce
 const { codexCommand, enforceCommand, mcpCommand } = require("./commands/codex-mcp");
 const { policyCommand } = require("./commands/policy");
 const { aeonCommand } = require("./commands/aeon");
+const { interlockCommand } = require("./commands/interlock");
 const { inspectOutput, InspectionSession } = require("../inspection");
 const {
   defaultPolicy,
@@ -89,6 +90,8 @@ async function main(argv) {
       return enforceCommand(args);
     case "aeon":
       return aeonCommand(args);
+    case "interlock":
+      return interlockCommand(args);
     case "--version":
     case "-v":
       console.log(VERSION);
@@ -149,6 +152,8 @@ Advanced:
   charon mcp config <name> -- <mcp-server-command>
   charon mcp proxy -- <mcp-server-command>
   charon aeon map [--json] [--cwd <path>]
+  charon interlock setup [--cwd <path>] [--no-codex]
+  charon interlock status [--cwd <path>]
 
 Runtime policy enforcement for autonomous agents.
 `);
