@@ -185,6 +185,7 @@ function writeTelegramMessage(cwd, item) {
 
 function telegramMessage({ id, action, decision, receiptPath }) {
   const meta = action?.metadata || {};
+  const receipt = receiptLabel({ meta, receiptPath });
   const lines = [
     `<code>CHARON PAUSE</code>`,
     `<code>review</code> ${escapeHtml(id)}`,
@@ -193,14 +194,15 @@ function telegramMessage({ id, action, decision, receiptPath }) {
   ];
   if (meta.repo) lines.push(`<code>repo</code> ${escapeHtml(meta.repo)}`);
   if (meta.runId) lines.push(`<code>run</code> ${escapeHtml(meta.runId)}`);
-  lines.push(`<code>receipt</code> ${escapeHtml(receiptPath)}`);
-  return lines.join("\n");
+  if (receipt) lines.push(`<code>receipt</code> ${receipt}`);
+  return quoteTelegram(lines.join("\n"));
 }
 
 function denyTelegramMessage(input = {}) {
   const action = input.action || {};
   const decision = input.decision || {};
   const meta = action.metadata || {};
+  const receipt = receiptLabel({ meta, receiptPath: input.receiptPath });
   const lines = [
     `<code>CHARON DENY</code>`,
     `<code>skill</code> ${escapeHtml(meta.skill || "unknown")}`,
@@ -209,8 +211,20 @@ function denyTelegramMessage(input = {}) {
   if (decision.ruleId) lines.push(`<code>rule</code> ${escapeHtml(decision.ruleId)}`);
   if (meta.repo) lines.push(`<code>repo</code> ${escapeHtml(meta.repo)}`);
   if (meta.runId) lines.push(`<code>run</code> ${escapeHtml(meta.runId)}`);
-  if (input.receiptPath) lines.push(`<code>receipt</code> ${escapeHtml(input.receiptPath)}`);
-  return lines.join("\n");
+  if (receipt) lines.push(`<code>receipt</code> ${receipt}`);
+  return quoteTelegram(lines.join("\n"));
+}
+
+function receiptLabel({ meta = {}, receiptPath = "" } = {}) {
+  if (meta.repo && meta.runId) {
+    const href = `https://github.com/${escapeHtml(meta.repo)}/actions/runs/${escapeHtml(meta.runId)}`;
+    return `<a href="${href}">run receipt</a>`;
+  }
+  return receiptPath ? escapeHtml(receiptPath) : "";
+}
+
+function quoteTelegram(text) {
+  return `<blockquote>${text}</blockquote>`;
 }
 
 function escapeHtml(value) {
