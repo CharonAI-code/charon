@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const {
   applyTelegramDecision,
+  buildDenyTelegramPayload,
   buildTelegramPayload,
   decideAeonReview,
   exportAeonReview,
@@ -16,7 +17,7 @@ const {
   runAeonPreflight,
 } = require("../../aeon");
 
-function aeonCommand(args) {
+async function aeonCommand(args) {
   const [sub = "map", ...rest] = args;
   if (sub === "map" || sub === "status") return aeonMapCommand(rest);
   if (sub === "preflight") return aeonPreflightCommand(rest);
@@ -79,6 +80,10 @@ function aeonPreflightCommand(args) {
     reason: result.reason,
     ruleId: result.ruleId,
     launched: false,
+    action: {
+      args: result.action.args,
+      metadata: result.action.metadata,
+    },
     receiptPath: result.receiptPath,
     reviewId: result.review ? result.review.id : undefined,
     reviewPath: result.review ? result.review.reviewPath : undefined,
@@ -143,7 +148,7 @@ function aeonReviewCommand(args) {
   throw new Error("usage: charon aeon review list|inspect <id>|export <id|latest>|approve <id>|reject <id>");
 }
 
-function aeonTelegramCommand(args) {
+async function aeonTelegramCommand(args) {
   const [sub = "payload", ...rest] = args;
   const cwd = flagValue(rest, "--cwd") || process.cwd();
   if (sub === "payload") {
@@ -156,13 +161,36 @@ function aeonTelegramCommand(args) {
     console.log(JSON.stringify(result.message, null, 2));
     return result;
   }
+  if (sub === "send") {
+    const id = rest.find((arg) => !arg.startsWith("--")) || "latest";
+    const preflightPath = flagValue(rest, "--preflight");
+    const dryRun = rest.includes("--dry-run");
+    const chatId = flagValue(rest, "--chat-id");
+    const token = flagValue(rest, "--token");
+    let result;
+    if (preflightPath) {
+      const preflight = JSON.parse(fs.readFileSync(path.resolve(cwd, preflightPath), "utf8"));
+      const payload = buildDenyTelegramPayload({ preflight, chatId });
+      result = await require("../../aeon").sendTelegramMessage({ message: payload.message, chatId, token, dryRun });
+    } else {
+      const payload = buildTelegramPayload({ cwd, id, chatId });
+      result = await require("../../aeon").sendTelegramMessage({ message: payload.message, chatId, token, dryRun });
+    }
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
   if (sub === "decide") {
-    const result = applyTelegramDecision({
+    const result = await applyTelegramDecision({
       cwd,
       text: flagValue(rest, "--text"),
       callback: flagValue(rest, "--callback"),
       actor: flagValue(rest, "--actor"),
       reason: flagValue(rest, "--reason"),
+      rerun: rest.includes("--rerun"),
+      repo: flagValue(rest, "--repo"),
+      ref: flagValue(rest, "--ref"),
+      workflow: flagValue(rest, "--workflow"),
+      githubToken: flagValue(rest, "--github-token"),
     });
     console.log(JSON.stringify({
       decision: result.decision,
@@ -170,14 +198,15 @@ function aeonTelegramCommand(args) {
       applied: result.applied,
       status: result.item ? result.item.status : undefined,
       reviewPath: result.reviewPath,
+      rerun: result.rerun,
     }, null, 2));
     return result;
   }
-  throw new Error("usage: charon aeon telegram payload <id|latest> [--chat-id <id>] | charon aeon telegram decide --text <text>|--callback <data>");
+  throw new Error("usage: charon aeon telegram payload <id|latest> [--chat-id <id>] | charon aeon telegram send <id|latest> [--preflight <json>] | charon aeon telegram decide --text <text>|--callback <data> [--rerun]");
 }
 
-function aeonSmokeCommand(args) {
-  const result = runAeonSmoke({
+async function aeonSmokeCommand(args) {
+  const result = await runAeonSmoke({
     cwd: flagValue(args, "--cwd") || process.cwd(),
     passSkill: flagValue(args, "--pass-skill"),
     pauseSkill: flagValue(args, "--pause-skill"),

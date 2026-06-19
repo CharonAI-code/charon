@@ -8,7 +8,7 @@ const { runAeonPreflight } = require("./preflight");
 const { exportAeonReview } = require("./review");
 const { applyTelegramDecision, buildTelegramPayload } = require("./telegram");
 
-function runAeonSmoke(input = {}) {
+async function runAeonSmoke(input = {}) {
   const cwd = path.resolve(input.cwd || process.cwd());
   const passSkill = input.passSkill || "digest";
   const pauseSkill = input.pauseSkill || "external-feature";
@@ -55,7 +55,7 @@ function runAeonSmoke(input = {}) {
     callback: telegram.message.reply_markup.inline_keyboard[0][0].callback_data,
   } : {}));
 
-  const decision = pause.review ? applyTelegramDecision({
+  const decision = pause.review ? await applyTelegramDecision({
     cwd,
     callback: `charon:reject:${pause.review.id}`,
     actor: input.actor || "charon-smoke",

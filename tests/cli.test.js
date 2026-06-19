@@ -760,6 +760,8 @@ test("aeon enforce installs preflight and policy idempotently", () => {
   assert.equal((workflow.match(/# >>> charon aeon preflight/g) || []).length, 1);
   assert.match(workflow, /npx -y github:CharonAI-code\/charon aeon preflight/);
   assert.match(workflow, /--review/);
+  assert.match(workflow, /aeon telegram send latest/);
+  assert.match(workflow, /aeon telegram send --preflight \.charon\/aeon\/preflight\.json/);
   assert.match(workflow, /charon aeon review export latest/);
   assert.match(workflow, /GITHUB_STEP_SUMMARY/);
   assert.ok(workflow.indexOf("Charon preflight") < workflow.indexOf("Run pre-fetch scripts"));
@@ -845,8 +847,17 @@ test("aeon preflight pauses high-risk skill and writes receipt plus review", () 
   assert.equal(telegramPayload.method, "sendMessage");
   assert.equal(telegramPayload.chat_id, "12345");
   assert.equal(telegramPayload.text.includes(out.reviewId), true);
+  assert.match(telegramPayload.text, /<code>CHARON PAUSE<\/code>/);
+  assert.match(telegramPayload.text, /<code>reason<\/code>/);
   assert.equal(telegramPayload.reply_markup.inline_keyboard[0][0].callback_data, `charon:approve:${out.reviewId}`);
   assert.equal(telegramPayload.reply_markup.inline_keyboard[0][1].callback_data, `charon:reject:${out.reviewId}`);
+
+  const drySend = run(["aeon", "telegram", "send", out.reviewId, "--chat-id", "12345", "--dry-run"], { cwd });
+  assert.equal(drySend.status, 0, drySend.stderr);
+  const dryPayload = JSON.parse(drySend.stdout);
+  assert.equal(dryPayload.sent, false);
+  assert.equal(dryPayload.message.chat_id, "12345");
+  assert.equal(dryPayload.message.reply_markup.inline_keyboard[0][0].callback_data, `charon:approve:${out.reviewId}`);
 
   const approved = run(["aeon", "review", "approve", out.reviewId, "--actor", "operator"], { cwd });
   assert.equal(approved.status, 0, approved.stderr);
@@ -908,6 +919,17 @@ test("aeon preflight denies destructive repo wipe intent before agent launch", (
   assert.equal(out.ruleId, "aeon.intent_delete.deny");
   assert.equal(out.launched, false);
   assert.equal(out.reviewId, undefined);
+  assert.equal(out.action.metadata.skill, "digest");
+  assert.equal(out.action.metadata.repo, "owner/aeon");
+  const preflightJson = path.join(cwd, "preflight-deny.json");
+  fs.writeFileSync(preflightJson, result.stdout);
+  const denySend = run(["aeon", "telegram", "send", "--preflight", preflightJson, "--chat-id", "12345", "--dry-run"], { cwd });
+  assert.equal(denySend.status, 0, denySend.stderr);
+  const denyPayload = JSON.parse(denySend.stdout);
+  assert.equal(denyPayload.sent, false);
+  assert.equal(denyPayload.message.reply_markup, undefined);
+  assert.match(denyPayload.message.text, /<code>CHARON DENY<\/code>/);
+  assert.match(denyPayload.message.text, /aeon\.intent_delete\.deny/);
   const receipt = JSON.parse(fs.readFileSync(out.receiptPath, "utf8"));
   assert.equal(receipt.execution.launched, false);
   assert.ok(receipt.action.resources.some((resource) => resource.role === "delete-path" && resource.value === "."));

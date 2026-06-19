@@ -186,15 +186,38 @@ function writeTelegramMessage(cwd, item) {
 function telegramMessage({ id, action, decision, receiptPath }) {
   const meta = action?.metadata || {};
   const lines = [
-    `Charon paused Aeon skill: ${meta.skill || "unknown"}`,
-    `Review: ${id}`,
-    `Reason: ${decision.reason || "policy pause"}`,
+    `<code>CHARON PAUSE</code>`,
+    `<code>review</code> ${escapeHtml(id)}`,
+    `<code>skill</code> ${escapeHtml(meta.skill || "unknown")}`,
+    `<code>reason</code> ${escapeHtml(decision.reason || "policy pause")}`,
   ];
-  if (meta.repo) lines.push(`Repo: ${meta.repo}`);
-  if (meta.runId) lines.push(`Run: ${meta.runId}`);
-  lines.push(`Receipt: ${receiptPath}`);
-  lines.push(`Approve/reject with: charon aeon review approve ${id} | charon aeon review reject ${id}`);
+  if (meta.repo) lines.push(`<code>repo</code> ${escapeHtml(meta.repo)}`);
+  if (meta.runId) lines.push(`<code>run</code> ${escapeHtml(meta.runId)}`);
+  lines.push(`<code>receipt</code> ${escapeHtml(receiptPath)}`);
   return lines.join("\n");
+}
+
+function denyTelegramMessage(input = {}) {
+  const action = input.action || {};
+  const decision = input.decision || {};
+  const meta = action.metadata || {};
+  const lines = [
+    `<code>CHARON DENY</code>`,
+    `<code>skill</code> ${escapeHtml(meta.skill || "unknown")}`,
+    `<code>reason</code> ${escapeHtml(decision.reason || "policy deny")}`,
+  ];
+  if (decision.ruleId) lines.push(`<code>rule</code> ${escapeHtml(decision.ruleId)}`);
+  if (meta.repo) lines.push(`<code>repo</code> ${escapeHtml(meta.repo)}`);
+  if (meta.runId) lines.push(`<code>run</code> ${escapeHtml(meta.runId)}`);
+  if (input.receiptPath) lines.push(`<code>receipt</code> ${escapeHtml(input.receiptPath)}`);
+  return lines.join("\n");
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function redactAction(action) {
@@ -259,6 +282,7 @@ function stableStringify(value) {
 
 module.exports = {
   createAeonReview,
+  denyTelegramMessage,
   listAeonReviews,
   loadAeonReview,
   latestAeonReview,
