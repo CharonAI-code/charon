@@ -64,7 +64,26 @@ function inferAeonIntentResources(text) {
   if (/\bexcept\s+readme(?:\.md)?\b/.test(lower) && /\b(delete|remove|wipe|clear|erase)\b/.test(lower)) {
     resources.push({ role: "delete-path", value: ".", source: "aeon.var.intent" });
   }
+  if (hasSecretExfilIntent(lower)) {
+    resources.push({ role: "unknown", value: "aeon.intent:secret-exfil", source: "aeon.var.intent" });
+  }
+  for (const url of extractUrls(String(text || ""))) {
+    resources.push({ role: "fetch-url", value: url, source: "aeon.var.intent" });
+  }
   return dedupeIntentResources(resources);
+}
+
+function hasSecretExfilIntent(lower) {
+  const secretTarget = /\b(env|environment|process\.env|secrets?|tokens?|credentials?|api[_ -]?keys?|github_token|npm_token|\.npmrc|ssh key|private key)\b/.test(lower);
+  const outbound = /\b(webhook|curl|post|send|exfiltrate|upload|forward|base64|encode|requestbin|interact\.sh|ngrok|pastebin)\b/.test(lower);
+  const persistence = /\b(postinstall|github actions?|workflow|pull request|release workflow|npm publish|every install|every pr)\b/.test(lower);
+  return secretTarget && (outbound || persistence);
+}
+
+function extractUrls(text) {
+  const urls = new Set();
+  for (const match of String(text || "").matchAll(/\bhttps?:\/\/[^\s"')]+/gi)) urls.add(match[0]);
+  return [...urls];
 }
 
 function dedupeIntentResources(resources) {
