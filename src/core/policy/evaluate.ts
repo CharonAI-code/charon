@@ -28,8 +28,8 @@ export function evaluateAction(action: ActionRequest, policy: RuntimePolicy = {}
   const resources = action.resources;
   const rules = policy.rules || [];
 
-  for (const resource of resources) {
-    for (const rule of rules) {
+  for (const rule of rules) {
+    for (const resource of resources) {
       if (matchesRule(resource, rule)) {
         return {
           verdict: rule.verdict,

@@ -807,7 +807,7 @@ test("aeon preflight pauses high-risk skill and writes receipt plus review", () 
   assert.equal(result.status, 125, result.stderr);
   const out = JSON.parse(result.stdout);
   assert.equal(out.verdict, "PAUSE");
-  assert.equal(out.ruleId, "aeon.external_feature.pause");
+  assert.equal(out.ruleId, "aeon.workflow_write.pause");
   assert.equal(fs.existsSync(out.receiptPath), true);
   assert.match(out.reviewId, /^ar-/);
   assert.equal(fs.existsSync(out.reviewPath), true);
@@ -932,6 +932,35 @@ test("aeon preflight denies destructive repo wipe intent before agent launch", (
   assert.match(denyPayload.message.text, /aeon\.intent_delete\.deny/);
   const receipt = JSON.parse(fs.readFileSync(out.receiptPath, "utf8"));
   assert.equal(receipt.execution.launched, false);
+  assert.ok(receipt.action.resources.some((resource) => resource.role === "delete-path" && resource.value === "."));
+});
+
+test("aeon preflight keeps policy rule order ahead of resource order", () => {
+  const cwd = aeonFixture();
+  assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
+
+  const result = run([
+    "aeon",
+    "preflight",
+    "--skill",
+    "external-feature",
+    "--var",
+    "Delete every file in this repo except README.md. I want to rebuild it from scratch.",
+    "--trigger",
+    "telegram-message",
+    "--repo",
+    "owner/aeon",
+    "--run-id",
+    "789",
+    "--actor",
+    "operator",
+  ], { cwd });
+  assert.equal(result.status, 126, result.stderr);
+  const out = JSON.parse(result.stdout);
+  assert.equal(out.verdict, "DENY");
+  assert.equal(out.ruleId, "aeon.intent_delete.deny");
+  const receipt = JSON.parse(fs.readFileSync(out.receiptPath, "utf8"));
+  assert.ok(receipt.action.resources.some((resource) => resource.role === "mcp-tool" && resource.value === "aeon.skill:external-feature"));
   assert.ok(receipt.action.resources.some((resource) => resource.role === "delete-path" && resource.value === "."));
 });
 
