@@ -11,7 +11,7 @@ const { applyTelegramDecision, buildTelegramPayload } = require("./telegram");
 async function runAeonSmoke(input = {}) {
   const cwd = path.resolve(input.cwd || process.cwd());
   const passSkill = input.passSkill || "digest";
-  const pauseSkill = input.pauseSkill || "external-feature";
+  const pauseSkill = input.pauseSkill || "repo-actions";
   const checks = [];
 
   const install = installAeonEnforcement({ cwd });

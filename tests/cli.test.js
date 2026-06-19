@@ -792,9 +792,9 @@ test("aeon preflight pauses high-risk skill and writes receipt plus review", () 
     "aeon",
     "preflight",
     "--skill",
-    "external-feature",
+    "repo-actions",
     "--var",
-    "owner/repo",
+    "prepare a repo cleanup plan",
     "--trigger",
     "telegram-message",
     "--repo",
@@ -807,7 +807,7 @@ test("aeon preflight pauses high-risk skill and writes receipt plus review", () 
   assert.equal(result.status, 125, result.stderr);
   const out = JSON.parse(result.stdout);
   assert.equal(out.verdict, "PAUSE");
-  assert.equal(out.ruleId, "aeon.workflow_write.pause");
+  assert.equal(out.ruleId, "aeon.repo_actions.pause");
   assert.equal(fs.existsSync(out.receiptPath), true);
   assert.match(out.reviewId, /^ar-/);
   assert.equal(fs.existsSync(out.reviewPath), true);
@@ -821,7 +821,7 @@ test("aeon preflight pauses high-risk skill and writes receipt plus review", () 
   const review = JSON.parse(fs.readFileSync(out.reviewPath, "utf8"));
   assert.equal(review.schema, "charon.aeonReview.v1");
   assert.equal(review.status, "paused");
-  assert.equal(review.source.skill, "external-feature");
+  assert.equal(review.source.skill, "repo-actions");
   assert.equal(review.receiptHash, receipt.receiptHash);
   assert.match(fs.readFileSync(out.telegramPath, "utf8"), new RegExp(out.reviewId));
 
@@ -871,7 +871,7 @@ test("aeon telegram decision callback and text apply signed reviews", () => {
   const cwd = aeonFixture();
   assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
 
-  const first = run(["aeon", "preflight", "--skill", "external-feature", "--trigger", "telegram-message"], { cwd });
+  const first = run(["aeon", "preflight", "--skill", "repo-actions", "--trigger", "telegram-message"], { cwd });
   assert.equal(first.status, 125, first.stderr);
   const firstOut = JSON.parse(first.stdout);
   const approved = run(["aeon", "telegram", "decide", "--callback", `charon:approve:${firstOut.reviewId}`, "--actor", "alice"], { cwd });
@@ -882,7 +882,7 @@ test("aeon telegram decision callback and text apply signed reviews", () => {
   assert.equal(approvedOut.status, "approved");
   assert.equal(JSON.parse(fs.readFileSync(firstOut.reviewPath, "utf8")).decidedBy, "alice");
 
-  const second = run(["aeon", "preflight", "--skill", "external-feature", "--trigger", "telegram-message"], { cwd });
+  const second = run(["aeon", "preflight", "--skill", "repo-actions", "--trigger", "telegram-message"], { cwd });
   assert.equal(second.status, 125, second.stderr);
   const secondOut = JSON.parse(second.stdout);
   const rejected = run(["aeon", "telegram", "decide", "--text", `/charon reject ${secondOut.reviewId}`, "--actor", "bob"], { cwd });
@@ -916,7 +916,7 @@ test("aeon preflight denies destructive repo wipe intent before agent launch", (
   assert.equal(result.status, 126, result.stderr);
   const out = JSON.parse(result.stdout);
   assert.equal(out.verdict, "DENY");
-  assert.equal(out.ruleId, "aeon.intent_delete.deny");
+  assert.equal(out.ruleId, "aeon.repo_wipe.deny");
   assert.equal(out.launched, false);
   assert.equal(out.reviewId, undefined);
   assert.equal(out.action.metadata.skill, "digest");
@@ -929,7 +929,7 @@ test("aeon preflight denies destructive repo wipe intent before agent launch", (
   assert.equal(denyPayload.sent, false);
   assert.equal(denyPayload.message.reply_markup, undefined);
   assert.match(denyPayload.message.text, /<code>CHARON DENY<\/code>/);
-  assert.match(denyPayload.message.text, /aeon\.intent_delete\.deny/);
+  assert.match(denyPayload.message.text, /aeon\.repo_wipe\.deny/);
   const receipt = JSON.parse(fs.readFileSync(out.receiptPath, "utf8"));
   assert.equal(receipt.execution.launched, false);
   assert.ok(receipt.action.resources.some((resource) => resource.role === "delete-path" && resource.value === "."));
@@ -943,7 +943,7 @@ test("aeon preflight keeps policy rule order ahead of resource order", () => {
     "aeon",
     "preflight",
     "--skill",
-    "external-feature",
+    "repo-actions",
     "--var",
     "Delete every file in this repo except README.md. I want to rebuild it from scratch.",
     "--trigger",
@@ -958,9 +958,9 @@ test("aeon preflight keeps policy rule order ahead of resource order", () => {
   assert.equal(result.status, 126, result.stderr);
   const out = JSON.parse(result.stdout);
   assert.equal(out.verdict, "DENY");
-  assert.equal(out.ruleId, "aeon.intent_delete.deny");
+  assert.equal(out.ruleId, "aeon.repo_wipe.deny");
   const receipt = JSON.parse(fs.readFileSync(out.receiptPath, "utf8"));
-  assert.ok(receipt.action.resources.some((resource) => resource.role === "mcp-tool" && resource.value === "aeon.skill:external-feature"));
+  assert.ok(receipt.action.resources.some((resource) => resource.role === "mcp-tool" && resource.value === "aeon.skill:repo-actions"));
   assert.ok(receipt.action.resources.some((resource) => resource.role === "delete-path" && resource.value === "."));
 });
 
@@ -987,7 +987,7 @@ test("aeon preflight denies high-risk repo-actions side effects before broad pau
   assert.equal(result.status, 126, result.stderr);
   const out = JSON.parse(result.stdout);
   assert.equal(out.verdict, "DENY");
-  assert.equal(out.ruleId, "aeon.intent_secret_exfil.deny");
+  assert.equal(out.ruleId, "aeon.secret_exfil.deny");
   assert.equal(out.reviewId, undefined);
   const receipt = JSON.parse(fs.readFileSync(out.receiptPath, "utf8"));
   assert.ok(receipt.action.resources.some((resource) => resource.role === "mcp-tool" && resource.value === "aeon.skill:repo-actions"));
@@ -1024,7 +1024,7 @@ test("aeon smoke validates MVP chain end to end", () => {
 test("aeon review verification fails when queue item is tampered", () => {
   const cwd = aeonFixture();
   assert.equal(run(["enforce", "aeon", "--quiet"], { cwd }).status, 0);
-  const result = run(["aeon", "preflight", "--skill", "external-feature", "--trigger", "telegram-message"], { cwd });
+  const result = run(["aeon", "preflight", "--skill", "repo-actions", "--trigger", "telegram-message"], { cwd });
   assert.equal(result.status, 125, result.stderr);
   const out = JSON.parse(result.stdout);
   const review = JSON.parse(fs.readFileSync(out.reviewPath, "utf8"));
