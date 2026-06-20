@@ -34,7 +34,7 @@ The intended flow:
 
 ### 1. Parse Mode
 
-Normalize `${var}`:
+Interpret the operator value using these modes:
 
 - empty, `install`, `setup`, `enable`, `repair` → `MODE=install`
 - `status`, `check`, `verify` → `MODE=status`

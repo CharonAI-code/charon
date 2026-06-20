@@ -43,7 +43,7 @@ If missing, tell the user to run `charon-setup` first. Do not create a policy fr
 
 ### 2. Parse The Operator Request
 
-Normalize `${var}`:
+Interpret the operator value using these modes:
 
 - empty, `status`, `explain` → explain current policy
 - `test`, `verify`, `smoke` → run probes only
