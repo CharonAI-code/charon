@@ -1,0 +1,34 @@
+{
+  "name": "Charon for AEON",
+  "version": "1.0.0",
+  "description": "Install and manage repo-local Charon policy enforcement for AEON runs.",
+  "author": "CharonAI-code",
+  "license": "MIT",
+  "homepage": "https://charon.codes",
+  "skills": [
+    {
+      "slug": "charon-setup",
+      "path": "charon-setup",
+      "description": "Install and verify Charon enforcement in an AEON repository.",
+      "category": "dev",
+      "default_enabled": false,
+      "secrets_required": [],
+      "capabilities": [
+        "external_api",
+        "writes_external_host"
+      ]
+    },
+    {
+      "slug": "charon-policy",
+      "path": "charon-policy",
+      "description": "Inspect, test, and safely update repo-local Charon policy.",
+      "category": "dev",
+      "default_enabled": false,
+      "secrets_required": [],
+      "capabilities": [
+        "external_api",
+        "writes_external_host"
+      ]
+    }
+  ]
+}

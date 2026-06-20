@@ -10,6 +10,7 @@ const test = require("node:test");
 const ROOT = path.resolve(__dirname, "..");
 const SETUP_SKILL_ROOT = path.join(ROOT, "skills", "aeon", "charon-setup");
 const POLICY_SKILL_ROOT = path.join(ROOT, "skills", "aeon", "charon-policy");
+const AEON_PACK_ROOT = path.join(ROOT, "skills", "aeon");
 const SETUP_SCRIPT = path.join(SETUP_SKILL_ROOT, "scripts", "setup_charon_aeon.sh");
 const POLICY_SCRIPT = path.join(POLICY_SKILL_ROOT, "scripts", "verify_policy.js");
 const CHARON = path.join(ROOT, "bin", "charon.js");
@@ -90,18 +91,30 @@ test("Aeon Charon skills are agent-readable", () => {
   const policy = fs.readFileSync(path.join(POLICY_SKILL_ROOT, "SKILL.md"), "utf8");
 
   assert.match(setup, /^---\nname: charon-setup/m);
-  assert.match(setup, /category: security/);
+  assert.match(setup, /category: dev/);
   assert.match(setup, /var: ""/);
   assert.match(setup, /commits: true/);
   assert.match(setup, /workflows:write/);
   assert.match(setup, /Never ask the operator to run a command/);
-  assert.match(setup, /setup_charon_aeon\.sh/);
+  assert.match(setup, /skills\/charon-setup\/scripts\/setup_charon_aeon\.sh/);
 
   assert.match(policy, /^---\nname: charon-policy/m);
-  assert.match(policy, /category: security/);
+  assert.match(policy, /category: dev/);
   assert.match(policy, /charon\.aeon\.yml/);
-  assert.match(policy, /verify_policy\.js/);
+  assert.match(policy, /skills\/charon-policy\/scripts\/verify_policy\.js/);
   assert.match(policy, /Weakening changes require/);
+});
+
+test("Aeon community pack declares both Charon skills", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(AEON_PACK_ROOT, "skills-pack.json"), "utf8"));
+
+  assert.equal(manifest.name, "Charon for AEON");
+  assert.equal(manifest.license, "MIT");
+  assert.deepEqual(manifest.skills.map((skill) => skill.slug), ["charon-setup", "charon-policy"]);
+  for (const skill of manifest.skills) {
+    assert.equal(skill.default_enabled, false);
+    assert.ok(fs.existsSync(path.join(AEON_PACK_ROOT, skill.path, "SKILL.md")));
+  }
 });
 
 test("Aeon setup skill installs Charon and commits setup files", () => {

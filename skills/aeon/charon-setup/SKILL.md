@@ -1,6 +1,6 @@
 ---
 name: charon-setup
-category: security
+category: dev
 description: Install and verify Charon enforcement in an AEON repo without requiring the operator to run terminal commands
 var: ""
 tags: [security, aeon, policy, github-actions]
@@ -47,7 +47,7 @@ Anything else is still `MODE=install`; treat the text as operator intent, not as
 Run the bundled helper from the repo root:
 
 ```bash
-bash skills/aeon/charon-setup/scripts/setup_charon_aeon.sh "$MODE"
+bash skills/charon-setup/scripts/setup_charon_aeon.sh "$MODE"
 ```
 
 Read the JSON printed by the helper. Do not reimplement the helper in the prompt.

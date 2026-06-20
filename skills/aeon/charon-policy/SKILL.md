@@ -1,6 +1,6 @@
 ---
 name: charon-policy
-category: security
+category: dev
 description: Inspect, explain, test, and safely edit charon.aeon.yml policy from natural language
 var: ""
 tags: [security, aeon, policy, governance]
@@ -107,7 +107,7 @@ Keep DENY rules above PAUSE rules.
 Run:
 
 ```bash
-node skills/aeon/charon-policy/scripts/verify_policy.js
+node skills/charon-policy/scripts/verify_policy.js
 ```
 
 Read the JSON output.
