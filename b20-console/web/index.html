@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0A0A0A" />
+    <title>B20 Console — Token Risk Indicator</title>
+    <link rel="icon" href="https://pbs.twimg.com/profile_images/2062754968852221952/QcEP9JKW_400x400.jpg" />
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600,700&f[]=general-sans@400,500,600&f[]=jetbrains-mono@400,500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg-grid" aria-hidden="true"></div>
+    <div class="bg-glow" aria-hidden="true"></div>
+    <div class="bg-scan" aria-hidden="true"></div>
+    <div class="bg-particles" id="bgParticles" aria-hidden="true"></div>
+
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="B20 Console home">
+          <div class="brand-mark"></div>
+          <span class="brand-text">B20 Console</span>
+          <span class="brand-by">by Charon</span>
+        </a>
+        <nav class="topbar-nav">
+          <a href="/methodology" class="topbar-link">methodology</a>
+          <div class="chain-nav">
+            <button class="chain-btn active" data-chain="base-sepolia">Base Sepolia</button>
+            <button class="chain-btn" data-chain="base">Base</button>
+          </div>
+        </nav>
+      </header>
+
+      <section class="inspector">
+        <p class="inspector-label">inspect any B20 token on Base</p>
+        <div class="input-row">
+          <div class="input-wrap">
+            <span class="input-prefix">$</span>
+            <input
+              id="addressInput"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="0xb200..."
+              value="0xb200000000000000000000c7d17966dc5e587ba0"
+            />
+          </div>
+          <button id="inspectBtn" class="inspect-btn" type="button">
+            <span class="inspect-text">inspect</span>
+            <span class="inspect-arrow">↗</span>
+          </button>
+        </div>
+      </section>
+
+      <div id="notice" class="notice hidden"></div>
+
+      <div id="loadingState" class="loading-state hidden">
+        <div class="loading-bar"></div>
+        <span class="loading-text">reading onchain state...</span>
+      </div>
+
+      <section id="results" class="results">
+        <div class="grid-2">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>Status</h2>
+              <div class="status-right">
+                <span id="liveBadge" class="badge">waiting</span>
+              </div>
+            </div>
+            <div id="riskIndicator" class="risk-indicator hidden">
+              <span class="risk-label">risk</span>
+              <div class="risk-rail">
+                <div id="riskPin" class="risk-pin" tabindex="0" role="button">
+                  <span id="riskDot" class="risk-dot">◆</span>
+                </div>
+              </div>
+              <span id="riskNum" class="risk-num">0</span>
+              <div id="riskTooltip" class="risk-tooltip">
+                <div class="risk-tooltip-head">
+                  <span id="riskScore" class="risk-tooltip-score">0</span>
+                </div>
+                <div id="riskReasons" class="risk-tooltip-reasons"></div>
+              </div>
+            </div>
+            <div class="kv-grid">
+              <div class="kv-item">
+                <span class="kv-label">B20</span>
+                <strong id="isB20" class="kv-value">—</strong>
+              </div>
+              <div class="kv-item">
+                <span class="kv-label">initialized</span>
+                <strong id="initialized" class="kv-value">—</strong>
+              </div>
+              <div class="kv-item">
+                <span class="kv-label">variant</span>
+                <strong id="variant" class="kv-value">—</strong>
+              </div>
+              <div class="kv-item">
+                <span class="kv-label">features</span>
+                <strong id="features" class="kv-value">—</strong>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <h2>Token</h2>
+            </div>
+            <div id="tokenStack" class="stack"></div>
+          </article>
+        </div>
+
+        <div class="grid-2">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>Supply</h2>
+            </div>
+            <div class="supply-display">
+              <div class="supply-bar-wrap">
+                <div id="supplyBar" class="supply-bar"></div>
+              </div>
+              <div class="supply-values">
+                <div class="supply-item">
+                  <span class="kv-label">total supply</span>
+                  <strong id="totalSupply" class="kv-value">—</strong>
+                </div>
+                <div class="supply-item">
+                  <span class="kv-label">supply cap</span>
+                  <strong id="supplyCap" class="kv-value">—</strong>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <h2>Policies</h2>
+            </div>
+            <div id="policyTable" class="policy-grid"></div>
+          </article>
+        </div>
+
+        <div class="grid-2">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>Pause</h2>
+            </div>
+            <div id="pauseRow" class="pause-grid"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <h2>Permit</h2>
+            </div>
+            <div id="permitStack" class="stack"></div>
+          </article>
+        </div>
+
+        <article class="panel panel-full">
+          <div class="panel-head">
+            <h2>Source</h2>
+            <button id="copyJson" class="copy-btn" type="button">copy json</button>
+          </div>
+          <div id="sourceStack" class="stack"></div>
+          <details class="raw-json">
+            <summary>raw json</summary>
+            <pre id="rawJson">{}</pre>
+          </details>
+        </article>
+      </section>
+
+      <footer class="footer">
+        <span>b20-console v0.1.0</span>
+        <span>read-only inspector · Base L2</span>
+        <a href="https://x.com/Charon_AI" target="_blank" rel="noreferrer">X @Charon_AI</a>
+      </footer>
+    </main>
+
+    <script src="/app.js"></script>
+    <script>
+      (function () {
+        const container = document.getElementById("bgParticles");
+        if (!container) return;
+        for (let i = 0; i < 24; i++) {
+          const p = document.createElement("div");
+          p.className = "particle";
+          p.style.left = Math.random() * 100 + "%";
+          p.style.top = Math.random() * 100 + "%";
+          p.style.setProperty("--dur", (2 + Math.random() * 3) + "s");
+          p.style.setProperty("--delay", (Math.random() * 4) + "s");
+          p.style.setProperty("--op", (0.15 + Math.random() * 0.35).toFixed(2));
+          container.appendChild(p);
+        }
+      })();
+    </script>
+  </body>
+</html>

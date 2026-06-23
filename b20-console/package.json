@@ -1,0 +1,22 @@
+{
+  "name": "b20-console",
+  "version": "0.1.0",
+  "private": true,
+  "description": "B20 token risk indicator for Base",
+  "type": "module",
+  "bin": {
+    "b20-console": "bin/b20-console.js"
+  },
+  "scripts": {
+    "inspect": "node bin/b20-console.js inspect",
+    "smoke": "node bin/b20-console.js inspect 0xb200000000000000000000c7d17966dc5e587ba0 --chain base-sepolia",
+    "smoke:source": "node bin/b20-console.js inspect 0xb200000000000000000000c7d17966dc5e587ba0 --chain base-sepolia --source",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "viem": "^2.53.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
