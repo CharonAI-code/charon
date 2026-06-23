@@ -44,18 +44,19 @@ function asText(value, fallback = "-") {
 }
 
 function policySummary(report) {
-  const entries = Object.entries(report.policies || {});
+  const entries = Array.isArray(report.policies) ? report.policies : Object.values(report.policies || {});
   if (entries.length === 0) return ["policies: not loaded"];
-  return entries.map(([key, value]) => {
-    const label = value?.label || value?.policyId || "unknown";
-    return `${key}: ${label}`;
+  return entries.map((value) => {
+    const scope = value?.scope || "policy";
+    const label = value?.label || value?.policyId || value?.id || "unknown";
+    return `${scope}: ${label}`;
   });
 }
 
 function pauseSummary(report) {
-  const entries = Object.entries(report.pauses || {});
+  const entries = Array.isArray(report.pause) ? report.pause : Object.values(report.pause || {});
   if (entries.length === 0) return ["pause: not loaded"];
-  return entries.map(([key, value]) => `${key}: ${value?.paused ? "paused" : "active"}`);
+  return entries.map((value) => `${value?.feature || "feature"}: ${value?.paused ? "paused" : "active"}`);
 }
 
 function format(report) {
@@ -68,9 +69,9 @@ function format(report) {
   lines.push(`B20 Console result: ${asText(risk.level, "unknown")} risk (${asText(risk.score, "unknown")})`);
   lines.push("");
   lines.push("State:");
-  lines.push(`- B20: ${report.isB20 ? "yes" : "no"}`);
-  lines.push(`- initialized: ${report.initialized ? "yes" : "no"}`);
-  lines.push(`- features: ${report.featuresActive ? "active" : "inactive"}`);
+  lines.push(`- B20: ${token.isB20 ? "yes" : "no"}`);
+  lines.push(`- initialized: ${token.initialized ? "yes" : "no"}`);
+  lines.push(`- features: ${report.activation?.featuresActive ? "active" : "inactive"}`);
   lines.push(`- token: ${asText(token.name)} (${asText(token.symbol)})`);
   lines.push(`- supply cap: ${asText(token.supplyCapFormatted || token.supplyCap)}`);
 
