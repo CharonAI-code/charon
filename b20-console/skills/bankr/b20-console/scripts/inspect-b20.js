@@ -2,6 +2,7 @@
 "use strict";
 
 const DEFAULT_API = "https://b20.charon.codes/api/inspect";
+const MAX_UINT128 = "340282366920938463463374607431768211455";
 
 function usage() {
   console.error("usage: node scripts/inspect-b20.js <address> [--chain base-sepolia|base] [--source] [--json]");
@@ -43,6 +44,17 @@ function asText(value, fallback = "-") {
   return String(value);
 }
 
+function featuresState(activation) {
+  if (!activation) return "unknown";
+  return activation.asset || activation.stablecoin ? "active" : "inactive";
+}
+
+function formatSupplyCap(token) {
+  const value = token.supplyCapFormatted || token.supplyCap;
+  if (String(value) === MAX_UINT128) return "unbounded";
+  return asText(value);
+}
+
 function policySummary(report) {
   const entries = Array.isArray(report.policies) ? report.policies : Object.values(report.policies || {});
   if (entries.length === 0) return ["policies: not loaded"];
@@ -71,9 +83,9 @@ function format(report) {
   lines.push("State:");
   lines.push(`- B20: ${token.isB20 ? "yes" : "no"}`);
   lines.push(`- initialized: ${token.initialized ? "yes" : "no"}`);
-  lines.push(`- features: ${report.activation?.featuresActive ? "active" : "inactive"}`);
+  lines.push(`- features: ${featuresState(report.activation)}`);
   lines.push(`- token: ${asText(token.name)} (${asText(token.symbol)})`);
-  lines.push(`- supply cap: ${asText(token.supplyCapFormatted || token.supplyCap)}`);
+  lines.push(`- supply cap: ${formatSupplyCap(token)}`);
 
   lines.push("");
   lines.push("Risk flags:");
@@ -81,7 +93,7 @@ function format(report) {
     lines.push("- none");
   } else {
     for (const reason of reasons) {
-      lines.push(`- ${asText(reason.id || reason.code)}: ${asText(reason.message || reason.summary || reason.description)}`);
+      lines.push(`- ${asText(reason.id || reason.code)}: ${asText(reason.detail || reason.message || reason.summary || reason.description)}`);
     }
   }
 
