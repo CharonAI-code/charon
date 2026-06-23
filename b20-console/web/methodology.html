@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0A0A0A" />
+    <title>Methodology — B20 Console</title>
+    <link rel="icon" href="https://pbs.twimg.com/profile_images/2062754968852221952/QcEP9JKW_400x400.jpg" />
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600,700&f[]=general-sans@400,500,600&f[]=jetbrains-mono@400,500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg-grid" aria-hidden="true"></div>
+    <div class="bg-glow" aria-hidden="true"></div>
+    <div class="bg-scan" aria-hidden="true"></div>
+
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="B20 Console home">
+          <div class="brand-mark"></div>
+          <span class="brand-text">B20 Console</span>
+          <span class="brand-by">by Charon</span>
+        </a>
+        <nav class="topbar-nav">
+          <a href="/" class="topbar-link">inspector</a>
+        </nav>
+      </header>
+
+      <section class="methodology">
+        <div class="meth-header">
+          <h1>Methodology</h1>
+          <p class="meth-subtitle">How B20 Console reads onchain state and produces risk scores.</p>
+        </div>
+
+        <!-- Risk Score -->
+        <article class="meth-section">
+          <h2>Risk Score</h2>
+          <div class="meth-body">
+            <p>B20 Console is a read-only inspector. It does not decide whether a token is good or bad. It reads onchain state, normalizes the result, and produces a deterministic risk score with reasons.</p>
+            <div class="meth-code-block">
+              <span class="meth-code-label">methodology</span>
+              <code>deterministic_rules_v1</code>
+            </div>
+            <p>The risk score is rule-based. Each matched rule adds points. The final score is capped at <code>100</code>.</p>
+            <div class="meth-score-table">
+              <div class="meth-score-row">
+                <span class="meth-score-range low">0 — 24</span>
+                <span class="meth-score-level low">low</span>
+              </div>
+              <div class="meth-score-row">
+                <span class="meth-score-range medium">25 — 59</span>
+                <span class="meth-score-level medium">medium</span>
+              </div>
+              <div class="meth-score-row">
+                <span class="meth-score-range high">60 — 100</span>
+                <span class="meth-score-level high">high</span>
+              </div>
+            </div>
+            <p class="meth-note">If reads fail and the score is otherwise <code>0</code>, the level can be <code>unknown</code>.</p>
+          </div>
+        </article>
+
+        <!-- Inspection Flow -->
+        <article class="meth-section">
+          <h2>Inspection Flow</h2>
+          <div class="meth-body">
+            <ol class="meth-steps">
+              <li>Validate the address format.</li>
+              <li>Check deployed bytecode at the address.</li>
+              <li>Check whether the B20 factory recognizes the token.</li>
+              <li>Read token metadata and supply data.</li>
+              <li>Read B20 policy IDs.</li>
+              <li>Read policy registry state.</li>
+              <li>Read pause state for B20 features.</li>
+              <li>Read permit / EIP-712 domain data.</li>
+              <li>Convert findings into risk reasons.</li>
+            </ol>
+            <p class="meth-note">Invalid or unavailable contracts do not produce a normal report.</p>
+            <div class="meth-code-block">
+              <span class="meth-code-label">special cases</span>
+              <div class="meth-code-lines">
+                <div><code>INVALID_ADDRESS</code> <span class="meth-code-desc">address is not valid</span></div>
+                <div><code>NO_CONTRACT</code> <span class="meth-code-desc">no contract exists at this address</span></div>
+                <div><code>NOT_B20</code> <span class="meth-code-desc">contract exists, but B20 factory does not recognize it</span></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Risk Flags -->
+        <article class="meth-section">
+          <h2>Risk Flags</h2>
+          <div class="meth-body">
+            <div class="meth-flags">
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">b20_features_inactive</code>
+                  <span class="meth-flag-sev high">high</span>
+                </div>
+                <p>B20 features are not active on this chain. This usually means the selected chain does not currently expose the expected B20 feature registry state.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">not_b20</code>
+                  <span class="meth-flag-sev high">high</span>
+                </div>
+                <p>The B20 factory does not recognize this address as a B20 token.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">not_initialized</code>
+                  <span class="meth-flag-sev high">high</span>
+                </div>
+                <p>The address matches the B20 path but is not initialized. An uninitialized B20 address is not a usable live token.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">policy_read_failed.&lt;scope&gt;</code>
+                  <span class="meth-flag-sev medium">medium</span>
+                </div>
+                <p>A policy ID could not be read from the token. This can mean the token does not expose the expected policy interface, the RPC failed, or the read reverted.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">policy_always_block.&lt;scope&gt;</code>
+                  <span class="meth-flag-sev high">high</span>
+                </div>
+                <p>The token uses an <code>ALWAYS_BLOCK</code> policy for the given scope. This can block a category of token operation.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">policy_custom.&lt;scope&gt;</code>
+                  <span class="meth-flag-sev medium">medium</span>
+                </div>
+                <p>The token uses a custom policy for the given scope. Custom policy is not automatically bad, but it means behavior depends on policy logic outside the basic token surface.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">policy_missing.&lt;scope&gt;</code>
+                  <span class="meth-flag-sev high">high</span>
+                </div>
+                <p>The token points to a policy ID that does not exist in the policy registry. This can create broken or unexpected behavior for the affected scope.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">policy_admin.&lt;scope&gt;</code>
+                  <span class="meth-flag-sev medium">medium</span>
+                </div>
+                <p>The policy has an active admin. An active admin can indicate mutable policy control.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">policy_pending_admin.&lt;scope&gt;</code>
+                  <span class="meth-flag-sev medium">medium</span>
+                </div>
+                <p>The policy has a pending admin transfer. This indicates policy control may change.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">paused.&lt;feature&gt;</code>
+                  <span class="meth-flag-sev medium">medium</span>
+                </div>
+                <p>A B20 feature is currently paused. Paused features can restrict token behavior.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">pause_read_failed.&lt;feature&gt;</code>
+                  <span class="meth-flag-sev medium">medium</span>
+                </div>
+                <p>The pause state for a feature could not be read. This is treated as uncertainty.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">supply_cap_unknown</code>
+                  <span class="meth-flag-sev medium">medium</span>
+                </div>
+                <p>Supply cap could not be read. The UI should avoid implying supply safety when the cap is unknown.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">supply_cap_unbounded</code>
+                  <span class="meth-flag-sev medium">medium</span>
+                </div>
+                <p>Supply cap is set to the B20 max sentinel. This means the token effectively has an unbounded cap inside the inspected model.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">supply_exceeds_cap</code>
+                  <span class="meth-flag-sev high">high</span>
+                </div>
+                <p>Total supply is greater than the reported supply cap. This is a strong invariant failure.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">permit_incomplete</code>
+                  <span class="meth-flag-sev low">low</span>
+                </div>
+                <p>Permit / EIP-712 domain data could not be fully read. This affects signing and approval UX.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">read_warning.&lt;step&gt;</code>
+                  <span class="meth-flag-sev low">low</span>
+                </div>
+                <p>One of the onchain reads failed. The raw JSON should expose the failed step and error code.</p>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Deployer-Controlled Risk -->
+        <article class="meth-section">
+          <h2>Deployer-Controlled Risk Surface</h2>
+          <div class="meth-body">
+            <p>The most important deployer-controlled or deployer-influenced flags are:</p>
+            <div class="meth-code-block">
+              <span class="meth-code-label">flags to watch</span>
+              <div class="meth-code-lines">
+                <div><code>policy_custom.*</code></div>
+                <div><code>policy_always_block.*</code></div>
+                <div><code>policy_missing.*</code></div>
+                <div><code>policy_admin.*</code></div>
+                <div><code>policy_pending_admin.*</code></div>
+                <div><code>paused.*</code></div>
+                <div><code>supply_cap_unbounded</code></div>
+                <div><code>supply_exceeds_cap</code></div>
+                <div><code>permit_incomplete</code></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Policy Scopes -->
+        <article class="meth-section">
+          <h2>Policy Scopes</h2>
+          <div class="meth-body">
+            <p>B20 Console reads policy state for these scopes:</p>
+            <div class="meth-code-block">
+              <span class="meth-code-label">scopes</span>
+              <div class="meth-code-lines">
+                <div><code>TRANSFER_SENDER_POLICY</code></div>
+                <div><code>TRANSFER_RECEIVER_POLICY</code></div>
+                <div><code>APPROVAL_SENDER_POLICY</code></div>
+                <div><code>APPROVAL_RECIPIENT_POLICY</code></div>
+              </div>
+            </div>
+            <p>Each scope has:</p>
+            <div class="meth-code-block">
+              <div class="meth-code-lines">
+                <div><code>id</code> <span class="meth-code-desc">policy identifier</span></div>
+                <div><code>label</code> <span class="meth-code-desc">ALWAYS_ALLOW | ALWAYS_BLOCK | CUSTOM</span></div>
+                <div><code>exists</code> <span class="meth-code-desc">whether the policy exists in the registry</span></div>
+                <div><code>admin</code> <span class="meth-code-desc">active admin address (if any)</span></div>
+                <div><code>pendingAdmin</code> <span class="meth-code-desc">pending admin transfer (if any)</span></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Pausable Features -->
+        <article class="meth-section">
+          <h2>Pausable Features</h2>
+          <div class="meth-body">
+            <p>B20 Console reads pause state for:</p>
+            <div class="meth-code-block">
+              <span class="meth-code-label">features</span>
+              <div class="meth-code-lines">
+                <div><code>transfer</code></div>
+                <div><code>approval</code></div>
+                <div><code>mint</code></div>
+              </div>
+            </div>
+            <p>Each feature can be: <code>active</code>, <code>paused</code>, or <code>unknown</code>.</p>
+          </div>
+        </article>
+
+        <!-- Error Codes -->
+        <article class="meth-section">
+          <h2>Error Codes</h2>
+          <div class="meth-body">
+            <div class="meth-flags">
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">INVALID_ADDRESS</code>
+                  <span class="meth-flag-sev high">input</span>
+                </div>
+                <p>The address provided is not a valid Ethereum address.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">UNSUPPORTED_CHAIN</code>
+                  <span class="meth-flag-sev high">input</span>
+                </div>
+                <p>The selected chain is not supported by B20 Console.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">PRECOMPILE_INACTIVE</code>
+                  <span class="meth-flag-sev medium">read</span>
+                </div>
+                <p>The B20 precompile returned no data, usually meaning the feature is inactive on this chain.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">RPC_TIMEOUT</code>
+                  <span class="meth-flag-sev medium">network</span>
+                </div>
+                <p>The RPC request timed out.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">RPC_RATE_LIMITED</code>
+                  <span class="meth-flag-sev medium">network</span>
+                </div>
+                <p>The RPC provider returned a rate limit error (429).</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">RPC_NETWORK_ERROR</code>
+                  <span class="meth-flag-sev medium">network</span>
+                </div>
+                <p>A network-level error occurred while reaching the RPC provider.</p>
+              </div>
+
+              <div class="meth-flag">
+                <div class="meth-flag-head">
+                  <code class="meth-flag-id">READ_FAILED</code>
+                  <span class="meth-flag-sev low">read</span>
+                </div>
+                <p>A catch-all error for any failed onchain read.</p>
+              </div>
+            </div>
+          </div>
+        </article>
+
+      </section>
+
+      <footer class="footer">
+        <span>b20-console v0.1.0</span>
+        <span>deterministic_rules_v1</span>
+        <a href="https://x.com/Charon_AI" target="_blank" rel="noreferrer">X @Charon_AI</a>
+      </footer>
+    </main>
+  </body>
+</html>

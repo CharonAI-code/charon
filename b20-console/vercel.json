@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/**/*.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "web/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/inspect",
+      "dest": "/api/inspect.js"
+    },
+    {
+      "src": "/methodology.html",
+      "status": 308,
+      "headers": {
+        "Location": "/methodology"
+      }
+    },
+    {
+      "src": "/methodology",
+      "dest": "/web/methodology.html"
+    },
+    {
+      "src": "/styles.css",
+      "dest": "/web/styles.css"
+    },
+    {
+      "src": "/app.js",
+      "dest": "/web/app.js"
+    },
+    {
+      "src": "/favicon.svg",
+      "dest": "/web/favicon.svg"
+    },
+    {
+      "src": "/favicon-v2.svg",
+      "dest": "/web/favicon-v2.svg"
+    },
+    {
+      "src": "/",
+      "dest": "/web/index.html"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/web/$1"
+    }
+  ]
+}
